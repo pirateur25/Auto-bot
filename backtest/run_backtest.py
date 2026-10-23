@@ -21,6 +21,35 @@ import engine  # noqa: E402
 import strategy  # noqa: E402
 
 
+def apply_params(text):
+    """'k=v;k2=v2' -> modifie strategy.PARAMS (chaque valeur est convertie dans le type de la valeur par défaut)."""
+    changed = {}
+    for part in [x.strip() for x in (text or "").replace("\n", ";").split(";") if x.strip()]:
+        if "=" not in part:
+            raise ValueError(f"réglage invalide '{part}' (format attendu : nom=valeur)")
+        k, v = [x.strip() for x in part.split("=", 1)]
+        if k not in strategy.PARAMS:
+            raise ValueError(f"réglage inconnu '{k}'. Possibles : {', '.join(strategy.PARAMS)}")
+        cur = strategy.PARAMS[k]
+        strategy.PARAMS[k] = (float(v) if isinstance(cur, float) else int(float(v)) if isinstance(cur, int)
+                              else v.replace(" ", ""))
+        changed[k] = strategy.PARAMS[k]
+    return changed
+
+
+def setup_breakdown(trades):
+    """Résultats par type de setup (ex. bubble5m|4h = bulle 5m, range H4) : n, % gagnants, espérance en R."""
+    if not len(trades) or "setup" not in trades:
+        return ""
+    t = trades.copy()
+    t["kind"] = t["setup"].astype(str).str.replace(r"[YR]$", "", regex=True)
+    rows = []
+    for k, g in t.groupby("kind"):
+        rows.append((len(g), f"  {k}: {len(g)} trades | gagnants {(g['pnl'] > 0).mean() * 100:.0f} % | {g['r'].mean():+.2f} R"))
+    rows.sort(reverse=True)
+    return "Par setup :\n" + "\n".join(r for _, r in rows[:12])
+
+
 def fmt_summary(symbol, interval, source, start, end, s):
     lines = [f"📊 Backtest {symbol} {interval} | {start} → {end or 'aujourd’hui'} | données: {source}",
              f"Capital : {s['capital_start']:.0f} → {s['capital_end']:.0f} ({s['return_pct']:+.2f} %)",
@@ -52,20 +81,28 @@ def plot_equity(equity, df, path, title):
 
 
 def telegram(text=None, photo=None):
+    """Envoie un message / une image et AFFICHE la réponse de Telegram dans les logs (pour diagnostiquer)."""
     token, chat = os.getenv("BOT_TOKEN"), os.getenv("CHAT_ID")
     if not token or not chat:
-        print("Telegram non configuré, envoi ignoré.")
-        return
+        print("TELEGRAM: BOT_TOKEN ou CHAT_ID manquant (secrets absents de ce dépôt ?) -> envoi ignoré.")
+        return False
+    ok = True
     try:
         if text:
-            requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                          json={"chat_id": chat, "text": text[:4000]}, timeout=20)
+            r = requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                              json={"chat_id": chat, "text": text[:4000]}, timeout=20)
+            print(f"TELEGRAM sendMessage -> {r.status_code} {r.text[:200]}")
+            ok = ok and r.status_code == 200
         if photo:
             with open(photo, "rb") as f:
-                requests.post(f"https://api.telegram.org/bot{token}/sendPhoto",
-                              data={"chat_id": chat}, files={"photo": f}, timeout=30)
+                r = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto",
+                                  data={"chat_id": chat}, files={"photo": f}, timeout=30)
+            print(f"TELEGRAM sendPhoto -> {r.status_code} {r.text[:200]}")
+            ok = ok and r.status_code == 200
     except requests.RequestException as e:
-        print("Erreur Telegram:", e)
+        print("TELEGRAM erreur réseau:", e)
+        return False
+    return ok
 
 
 def main():
@@ -82,10 +119,16 @@ def main():
     ap.add_argument("--leverage", type=float, default=1.0, help="levier maximum")
     ap.add_argument("--csv", default="", help="CSV local (time,open,high,low,close,volume) au lieu du téléchargement")
     ap.add_argument("--outdir", default="results")
+    ap.add_argument("--params", default="", help="réglages de la stratégie : 'trend_mode=ma;tp_fib=0.62;confirms=bubble'")
     a = ap.parse_args()
 
     symbols = [s.strip().upper() for s in a.symbols.split(",") if s.strip()]
     os.makedirs(a.outdir, exist_ok=True)
+    overrides = apply_params(a.params)
+    ov_txt = ("Réglages : " + "; ".join(f"{k}={v}" for k, v in overrides.items())) if overrides else "Réglages : par défaut"
+    print(ov_txt)
+    # message de test immédiat : confirme que le bot Telegram et le CHAT_ID fonctionnent
+    telegram(f"🚀 Backtest lancé : {', '.join(symbols)} {a.interval} depuis {a.start}\n{ov_txt}")
     recap = []
     for sym in symbols:
         try:
@@ -103,6 +146,10 @@ def main():
             recap.append(f"{sym}: erreur")
             continue
         summary = fmt_summary(sym, a.interval, source, a.start, a.end, stats)
+        summary += "\n" + ov_txt
+        bd = setup_breakdown(trades)
+        if bd:
+            summary += "\n" + bd
         print(summary)
         tag = f"{sym}_{a.interval}"
         trades.to_csv(os.path.join(a.outdir, f"{tag}_trades.csv"), index=False)
@@ -114,11 +161,10 @@ def main():
         recap.append(f"{sym}: {stats['return_pct']:+.1f} % | {stats['trades']} trades | DD {stats['max_drawdown_pct']:.1f} %")
 
     if len(symbols) > 1:
-        text = f"📋 Récapitulatif {a.interval} (sans réglages perso)\n" + "\n".join(recap)
+        text = f"📋 Récapitulatif {a.interval} \n" + "\n".join(recap)
         print(text)
         telegram(text)
 
 
 if __name__ == "__main__":
     main()
-  

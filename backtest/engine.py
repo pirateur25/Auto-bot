@@ -39,7 +39,7 @@ def run_backtest(df, strategy, capital=10000.0, risk_pct=1.0, fee_pct=0.1, slipp
         trades.append({
             "entry_time": pos["entry_time"], "exit_time": times.iloc[i], "side": pos["side"],
             "entry": pos["entry"], "exit": price, "sl": pos["sl"], "tp": pos["tp"], "qty": pos["qty"],
-            "bars": i - pos["entry_i"], "reason": reason,
+            "bars": i - pos["entry_i"], "reason": reason, "setup": pos["meta"],
             "fees": pos["entry_fee"] + exit_fee, "pnl": net,
             "r": net / pos["risk_amount"] if pos["risk_amount"] > 0 else 0.0,
             "balance_after": balance,
@@ -66,7 +66,8 @@ def run_backtest(df, strategy, capital=10000.0, risk_pct=1.0, fee_pct=0.1, slipp
                 entry_fee = qty * entry * fee
                 balance -= entry_fee
                 pos = {"side": side, "entry": entry, "sl": sl, "tp": tp, "qty": qty, "entry_i": i,
-                       "entry_time": times.iloc[i], "entry_fee": entry_fee, "risk_amount": qty * risk_dist}
+                       "entry_time": times.iloc[i], "entry_fee": entry_fee, "risk_amount": qty * risk_dist,
+                       "meta": sig.get("meta", "")}
 
         # 2) gestion de la position sur cette bougie
         if pos is not None:
@@ -134,4 +135,3 @@ def compute_stats(trades, equity, df, capital):
             "best_r": float(trades["r"].max()), "worst_r": float(trades["r"].min()),
         })
     return s
-  

@@ -9,7 +9,7 @@ on:
       interval:
         description: "Unité de temps"
         type: choice
-        default: "1h"
+        default: "5m"
         options: ["5m", "15m", "30m", "1h", "4h", "1d"]
       start:
         description: "Date de début (AAAA-MM-JJ)"
@@ -26,6 +26,9 @@ on:
       leverage:
         description: "Levier maximum"
         default: "1"
+      params:
+        description: "Réglages stratégie (ex: trend_mode=ma;tp_fib=0.62;confirms=bubble). Vide = défaut"
+        default: ""
 
 jobs:
   backtest:
@@ -54,10 +57,11 @@ jobs:
           RISK: ${{ inputs.risk_pct }}
           FEE: ${{ inputs.fee_pct }}
           LEVERAGE: ${{ inputs.leverage }}
+          PARAMS: ${{ inputs.params }}
         run: |
           python backtest/run_backtest.py \
             --symbols "$SYMBOLS" --interval "$INTERVAL" --start "$START" --end "$END" \
-            --risk "$RISK" --fee "$FEE" --leverage "$LEVERAGE"
+            --risk "$RISK" --fee "$FEE" --leverage "$LEVERAGE" --params "$PARAMS"
 
       - name: Sauvegarde des résultats (trades, courbes)
         if: always()

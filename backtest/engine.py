@@ -43,6 +43,7 @@ def run_backtest(df, strategy, capital=10000.0, risk_pct=1.0, fee_pct=0.1, slipp
             "fees": pos["entry_fee"] + exit_fee, "pnl": net,
             "r": net / pos["risk_amount"] if pos["risk_amount"] > 0 else 0.0,
             "balance_after": balance,
+            **pos["info"],
         })
         pos = None
 
@@ -67,7 +68,7 @@ def run_backtest(df, strategy, capital=10000.0, risk_pct=1.0, fee_pct=0.1, slipp
                 balance -= entry_fee
                 pos = {"side": side, "entry": entry, "sl": sl, "tp": tp, "qty": qty, "entry_i": i,
                        "entry_time": times.iloc[i], "entry_fee": entry_fee, "risk_amount": qty * risk_dist,
-                       "meta": sig.get("meta", "")}
+                       "meta": sig.get("meta", ""), "info": sig.get("info") or {}}
 
         # 2) gestion de la position sur cette bougie
         if pos is not None:

@@ -220,51 +220,58 @@ def bear_range(F, fh, fl, p, tf):
 # ------------------------------------------------------------------ MSS après sweep
 
 def mss_events(h, l, c, k, ratio, o=None):
-    """MSS baissier (définition de Yacine) :
-      1) H1 = un sommet confirmé (fractale de k bougies de chaque côté) ;
-      2) le prix balaie H1 (sweep) et fait un 2e plus haut H2 > H1 ;
+    """MSS baissier (définition de Yacine), recalculé en continu sur les sommets VOISINS :
+      1) H1 = le dernier sommet confirmé (fractale de k bougies de chaque côté) avant H2 ;
+      2) H2 = un plus haut qui dépasse H1 (sweep). H2 peut être encore provisoire : c'est le plus haut depuis H1 ;
       3) L2 = le plus bas (mèche comprise) entre H1 et H2 = le creux à l'origine de H2 ;
       4) une bougie BAISSIÈRE dont la CLÔTURE (le corps) passe sous L2 = cassure ;
       5) cassure plus rapide que la montée : (t - H2) <= ratio x (H2 - L2), en bougies.
-    Dès qu'une clôture passe sous L2 le scénario est consommé (signal ou non). Causal : un sommet n'est
-    connu que k bougies après sa formation. Renvoie (événement, H2, H1, L2)."""
+    Chaque couple (H1, H2) ne peut se déclencher qu'une fois : dès qu'une clôture passe sous L2 il est consommé.
+    Causal : un sommet n'est connu que k bougies après sa formation. Renvoie (événement, H2, H1, L2)."""
     n = len(h)
     ev = np.zeros(n, bool)
     o_h2, o_h1, o_l2 = (np.full(n, np.nan) for _ in range(3))
-    hi_i, hi_p = -1, np.nan            # H1 courant
-    active = False                     # True une fois H1 balayé
-    run_min, run_min_i = np.inf, -1    # plus bas depuis H1
-    runmax, runmax_i = -np.inf, -1     # H2 provisoire
-    l2, l2_i = np.nan, -1
+    piv = []                        # sommets confirmés (indice, prix)
+    runM, runM_i = -np.inf, -1      # plus haut depuis le dernier sommet confirmé
+    consumed = set()
+    ckey, cL, cLi = None, np.nan, -1
     for t in range(n):
-        # a) cassure du creux L2 (avec les valeurs d'avant cette bougie)
-        if active and c[t] < l2:
-            if (o is None or c[t] < o[t]) and (t - runmax_i) <= ratio * (runmax_i - l2_i):
-                ev[t], o_h2[t], o_h1[t], o_l2[t] = True, runmax, hi_p, l2
-            active, hi_i, hi_p = False, -1, np.nan
-        # b) nouveau sommet confirmé (seulement si aucun scénario n'est en cours)
         p = t - k
-        pivot = (not active) and p >= k and h[p] > h[p - k:p].max() and h[p] >= h[p + 1:t + 1].max()
-        if pivot:
-            hi_i, hi_p = p, h[p]
-            seg = l[p + 1:t + 1]
-            run_min_i = p + 1 + int(seg.argmin())
-            run_min = seg.min()
-        elif hi_i >= 0 and l[t] < run_min:
-            run_min, run_min_i = l[t], t
-        # c) sweep de H1, puis suivi du 2e plus haut
-        if hi_i >= 0:
-            if not active:
-                if h[t] > hi_p:
-                    active, runmax, runmax_i = True, h[t], t
-                    l2, l2_i = run_min, run_min_i
-            elif h[t] > runmax:
-                runmax, runmax_i = h[t], t
-                l2, l2_i = run_min, run_min_i
+        if p >= k and h[p] > h[p - k:p].max() and h[p] >= h[p + 1:t + 1].max():
+            piv.append((p, h[p]))
+            seg = h[p + 1:t + 1]
+            runM, runM_i = seg.max(), p + 1 + int(seg.argmax())
+        elif piv and h[t] > runM:
+            runM, runM_i = h[t], t
+        if not piv:
+            continue
+        ia, pa = piv[-1]
+        if runM > pa:                                   # H2 provisoire : plus haut depuis le dernier sommet
+            h1i, h1p, h2i, h2p = ia, pa, runM_i, runM
+        elif len(piv) >= 2 and pa > piv[-2][1]:        # H2 = dernier sommet confirmé, H1 = celui d'avant
+            h1i, h1p = piv[-2]
+            h2i, h2p = ia, pa
+        else:
+            continue
+        key = (h1i, h2i)
+        if key != ckey:
+            seg = l[h1i + 1:h2i + 1]
+            cL, cLi, ckey = seg.min(), h1i + 1 + int(seg.argmin()), key
+        if t > h2i and c[t] < cL and key not in consumed:
+            consumed.add(key)
+            if (o is None or c[t] < o[t]) and (t - h2i) <= ratio * (h2i - cLi):
+                ev[t], o_h2[t], o_h1[t], o_l2[t] = True, h2p, h1p, cL
     return ev, o_h2, o_h1, o_l2
 
 
 # ------------------------------------------------------------------ construction des signaux
+
+DIAG = {}   # entonnoir : combien de candidats sont éliminés par chaque filtre, par type de confirmation
+
+
+def _d(kind, reason):
+    DIAG[(kind, reason)] = DIAG.get((kind, reason), 0) + 1
+
 
 def run_world(F, B, jm, p, sign):
     """sign=+1 : on cherche des SHORTS (tendance baissière). sign=-1 : monde en miroir -> des LONGS.
@@ -308,34 +315,43 @@ def run_world(F, B, jm, p, sign):
         if "mss" in confirms:
             ev, h2, h1m, l2m = mss_events(vh, vl, vc, p["mss_fractal"], p["mss_speed_ratio"], vo)
             cands += [(int(j), "mss", h2[j], (h1m[j], h2[j], l2m[j])) for j in np.where(ev)[0] if okY[j]]
+            _d("mss_brut", "0 événements MSS " + Y)
         cands.sort(key=lambda x: x[0])
         for j, kind, sweep, mssp in cands:
             i = int(iY[j])
             jt = jm[tT][i]
+            _d(kind, "0 détectés")
             if jt < 0 or (p["trend_filter"] and not bear[jt]):
+                _d(kind, "1 hors tendance")
                 continue
             for R, rg in ranges.items():
                 jr = jm[R][i]
                 if jr < 0 or not rg["valid"][jr]:
+                    _d(kind, "2 pas de range valide")
                     continue
                 H, L = rg["H"][jr], rg["L"][jr]
                 zl, zh = L + p["ote_lo"] * (H - L), L + p["ote_hi"] * (H - L)
                 if kind == "bubble":
                     if not (max(vh[j - 1], vh[j]) >= zl and min(vl[j - 1], vl[j]) <= zh):
+                        _d(kind, "3 hors zone OTE")
                         continue
                 elif not (zl <= sweep <= H):
+                    _d(kind, "3 hors zone OTE")
                     continue
                 Rf, li = F[R], int(rg["Li"][jr])
                 bs = int(np.searchsorted(B["open_ns"], Rf["open_ns"][li], side="left"))
                 be = int(np.searchsorted(B["open_ns"], Rf["close_ns"][li], side="left"))
                 if be <= bs:
+                    _d(kind, "4 données manquantes")
                     continue
                 bL = bs + int(np.argmin(bl[bs:be]))
                 after_l, after_h = bl[bL + 1:i + 1], bh[bL + 1:i + 1]
                 if len(after_h) == 0 or after_l.min() < bl[bL]:  # nouveau plus bas : la jambe a changé
+                    _d(kind, "5 nouveau extrême depuis le creux du range")
                     continue
                 peak = after_h.max()
                 if peak >= H:
+                    _d(kind, "6 sommet du range repris")
                     continue
                 atr = V["atr"][j]
                 if atr != atr:
@@ -344,9 +360,12 @@ def run_world(F, B, jm, p, sign):
                 tp = peak - p["tp_fib"] * (peak - bl[bL])
                 entry = vc[j]
                 if not (tp < entry < sl):
+                    _d(kind, "7 entrée déjà sous le TP")
                     continue
                 if p["min_rr"] and (entry - tp) < p["min_rr"] * (sl - entry):
+                    _d(kind, "8 ratio gain/risque trop faible")
                     continue
+                _d(kind, "9 SIGNAL")
                 # ---- infos détaillées du trade (prix réels, pas en miroir)
                 def bidx(ci, arr, fn):
                     a0 = int(np.searchsorted(B["open_ns"], Rf["open_ns"][ci], side="left"))
@@ -419,6 +438,10 @@ def prepare(df):
         label = "baissière" if sign == 1 else "haussière"
         print(f"Tendance {p['trend_tf']} {label} ({p['trend_mode']}) : {share * 100:.1f} % du temps | signaux {name} : {len(res)}")
 
+    for kind in ("bubble", "mss"):
+        rows = sorted((r, n) for (k, r), n in DIAG.items() if k == kind)
+        if rows:
+            print(f"Entonnoir {kind} (les 2 sens) : " + " | ".join(f"{r[2:]} {n}" if r[0] != "0" else f"détectés {n}" for r, n in rows))
     sig_side = np.zeros(nb, dtype=np.int8)
     sig_sl = np.full(nb, np.nan)
     sig_tp = np.full(nb, np.nan)

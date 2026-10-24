@@ -37,6 +37,7 @@ PARAMS = {
     "zz_atr_15m": 3.0,
     # --- retracement ---
     "range_tfs": "4h,1h",       # jambes utilisées pour la zone OTE
+    "trend_filter": 1,          # 1 = on ne trade que dans le sens de la tendance ; 0 = pas de filtre de tendance
     "zz_atr_trend": 2.0,        # ZigZag de la TENDANCE (plus grand = tendance plus lente / plus longue)
     "range_origin": "leg",      # "leg" = le retracement part de l'ORIGINE du mouvement complet ; "pivot" = dernier pivot seulement
     "leg_lookback": 300,        # en "leg" : on remonte au plus de N bougies de l'unité du range
@@ -311,7 +312,7 @@ def run_world(F, B, jm, p, sign):
         for j, kind, sweep, mssp in cands:
             i = int(iY[j])
             jt = jm[tT][i]
-            if jt < 0 or not bear[jt]:
+            if jt < 0 or (p["trend_filter"] and not bear[jt]):
                 continue
             for R, rg in ranges.items():
                 jr = jm[R][i]
@@ -370,7 +371,8 @@ def run_world(F, B, jm, p, sign):
                     ph_, ch_, pl_, cl_ = (zzT[k][jt_] for k in ("prev_hi", "cur_hi", "prev_lo", "cur_lo"))
                 else:   # monde en miroir : les sommets du monde sont les creux réels
                     ph_, ch_, pl_, cl_ = (-zzT[k][jt_] for k in ("prev_lo", "cur_lo", "prev_hi", "cur_hi"))
-                info.update({"trend_dir": "BAISSIERE" if sign == 1 else "HAUSSIERE", "trend_mode": p["trend_mode"],
+                tdir = ("BAISSIERE" if sign == 1 else "HAUSSIERE") if bear[jt_] else "AUCUNE (filtre désactivé)"
+                info.update({"trend_dir": tdir, "trend_mode": p["trend_mode"],
                              "trend_prev_high": ph_, "trend_last_high": ch_, "trend_prev_low": pl_, "trend_last_low": cl_,
                              "trend_ema": sign * emaT[jt_], "trend_close": sign * tc[jt_]})
                 if kind == "bubble":   # chiffres de la bulle, pour les comparer au graphique

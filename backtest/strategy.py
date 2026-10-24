@@ -37,6 +37,9 @@ PARAMS = {
     "zz_atr_15m": 3.0,
     # --- retracement ---
     "range_tfs": "4h,1h",       # jambes utilisées pour la zone OTE
+    "zz_atr_trend": 2.0,        # ZigZag de la TENDANCE (plus grand = tendance plus lente / plus longue)
+    "range_origin": "leg",      # "leg" = le retracement part de l'ORIGINE du mouvement complet ; "pivot" = dernier pivot seulement
+    "leg_lookback": 300,        # en "leg" : on remonte au plus de N bougies de l'unité du range
     "ote_lo": 0.618,
     "ote_hi": 0.786,
     # --- confirmations ---
@@ -164,7 +167,7 @@ def trend_bear(T, th, tl, tc, p):
     bear_dow = np.zeros(n, bool)
     bear_ma = np.zeros(n, bool)
     if mode in ("dow", "both"):
-        zz = zigzag(th, tl, T["atr"], p.get("zz_atr_" + p["trend_tf"], 2.0))
+        zz = zigzag(th, tl, T["atr"], p["zz_atr_trend"])
         have = ~(np.isnan(zz["prev_hi"]) | np.isnan(zz["prev_lo"]) | np.isnan(zz["cur_hi"]) | np.isnan(zz["cur_lo"]))
         with np.errstate(invalid="ignore"):
             # sommets ET creux de plus en plus bas ; tendance annulée si le prix clôture au-dessus du dernier sommet
@@ -196,7 +199,21 @@ def bear_range(F, fh, fl, p, tf):
         L[down], Li[down] = zz["ext"][down], zz["ext_i"][down]
         L[up], Li[up] = zz["cur_lo"][up], zz["cur_lo_i"][up]
         valid = (down | up) & (L < H)
-    return {"H": H, "Hi": zz["cur_hi_i"], "L": L, "Li": Li, "valid": valid}
+    Hi = zz["cur_hi_i"].copy()
+    if p.get("range_origin", "leg") == "leg":
+        # Le haut du retracement = le plus haut depuis la DERNIÈRE FOIS où le prix était aussi bas que L
+        # (= le début du mouvement complet, pas seulement le dernier pivot).
+        look = int(p.get("leg_lookback", 300))
+        H = H.copy()
+        for t in np.where(valid)[0]:
+            hi = int(Hi[t])
+            a = max(0, hi - look)
+            idx = np.where(fl[a:hi] <= L[t])[0]
+            k = a + int(idx[-1]) + 1 if len(idx) else a
+            j = k + int(np.argmax(fh[k:hi + 1]))
+            if fh[j] > H[t]:
+                H[t], Hi[t] = fh[j], j
+    return {"H": H, "Hi": Hi, "L": L, "Li": Li, "valid": valid}
 
 
 # ------------------------------------------------------------------ MSS après sweep
@@ -264,7 +281,7 @@ def run_world(F, B, jm, p, sign):
     T = F[tT]
     _, th, tl, tc = view(T)
     bear = trend_bear(T, th, tl, tc, p)
-    zzT = zigzag(th, tl, T["atr"], p.get("zz_atr_" + tT, 2.0))                 # pivots utilisés par la loi de Dow (pour les fiches)
+    zzT = zigzag(th, tl, T["atr"], p["zz_atr_trend"])                 # pivots utilisés par la loi de Dow (pour les fiches)
     emaT = pd.Series(tc).ewm(span=p["ma_len"], adjust=False).mean().to_numpy()
     ranges = {}
     for R in _csv(p["range_tfs"]):
@@ -416,4 +433,5 @@ def signal(d, i):
     s = d["sig_side"][i]
     if s == 0:
         return None
-    return {"side": "long" if s > 0 else "short", "sl": d["sig_sl"][i], "tp": d["sig_tp"][i], "meta": d["sig_code"][i], "info": d["sig_info"][i]}
+    return {"side": "long" if s > 0 else "short", "sl": d["sig_sl"][i], "tp": d["sig_tp"][i], "meta": d["sig_code"][i], "info": d["sig_info"][i],
+            "entry": d["close"][i]}

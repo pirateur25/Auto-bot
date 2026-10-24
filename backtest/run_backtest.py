@@ -50,6 +50,37 @@ def setup_breakdown(trades):
     return "Par setup :\n" + "\n".join(r for _, r in rows[:12])
 
 
+def _fp(x):
+    return f"{x:.2f}" if abs(x) >= 1 else f"{x:.5f}"
+
+
+def trades_report(trades, symbol, interval):
+    """Texte lisible : une fiche par trade (heure d'entrée, SL, TP, points du Fibonacci, confirmation)."""
+    if not len(trades):
+        return ""
+    out = []
+    for n, (_, t) in enumerate(trades.iterrows(), 1):
+        g = lambda k: t[k] if k in t and t[k] == t[k] else None
+        icon = "🔴 SHORT" if t["side"] == "short" else "🟢 LONG"
+        res = f"{t['reason']} ({t['r']:+.2f} R, {t['pnl']:+.0f})"
+        lines = [f"#{n} {symbol} {icon} | {res}",
+                 f"Entrée : {str(t['entry_time'])[:16]} UTC à {_fp(t['entry'])} | sortie {str(t['exit_time'])[:16]} à {_fp(t['exit'])}",
+                 f"SL {_fp(t['sl'])} | TP {_fp(t['tp'])} | {t['bars']} bougies {interval}"]
+        if g("confirm"):
+            lines.append(f"Confirmation : {t['confirm']} (clôturée {t['signal_time']} UTC) | tendance {t['trend_tf']} | range {t['range_tf']}")
+        if g("fib_range_high") is not None:
+            lines.append(f"Fibonacci du range ({t['range_tf']}) : haut {_fp(t['fib_range_high'])} ({t['fib_range_high_time']}) "
+                         f"/ bas {_fp(t['fib_range_low'])} ({t['fib_range_low_time']})")
+            lines.append(f"Zone OTE : {_fp(t['ote_zone_low'])} – {_fp(t['ote_zone_high'])}")
+            lines.append(f"Fibonacci du TP (jambe) : haut {_fp(t['fib_leg_high'])} ({t['fib_leg_high_time']}) "
+                         f"/ bas {_fp(t['fib_leg_low'])} ({t['fib_leg_low_time']}) | niveau {t['tp_fib']}")
+        if g("mss_second_extreme") is not None:
+            lines.append(f"MSS : 1er extrême {_fp(t['mss_first_extreme'])} → 2e extrême {_fp(t['mss_second_extreme'])} "
+                         f"| creux d'origine cassé {_fp(t['mss_origin_level'])}")
+        out.append("\n".join(lines))
+    return "\n\n".join(out)
+
+
 def fmt_summary(symbol, interval, source, start, end, s):
     lines = [f"📊 Backtest {symbol} {interval} | {start} → {end or 'aujourd’hui'} | données: {source}",
              f"Capital : {s['capital_start']:.0f} → {s['capital_end']:.0f} ({s['return_pct']:+.2f} %)",
@@ -80,7 +111,7 @@ def plot_equity(equity, df, path, title):
     plt.close(fig)
 
 
-def telegram(text=None, photo=None):
+def telegram(text=None, photo=None, document=None):
     """Envoie un message / une image et AFFICHE la réponse de Telegram dans les logs (pour diagnostiquer)."""
     token, chat = os.getenv("BOT_TOKEN"), os.getenv("CHAT_ID")
     if not token or not chat:
@@ -98,6 +129,12 @@ def telegram(text=None, photo=None):
                 r = requests.post(f"https://api.telegram.org/bot{token}/sendPhoto",
                                   data={"chat_id": chat}, files={"photo": f}, timeout=30)
             print(f"TELEGRAM sendPhoto -> {r.status_code} {r.text[:200]}")
+            ok = ok and r.status_code == 200
+        if document:
+            with open(document, "rb") as f:
+                r = requests.post(f"https://api.telegram.org/bot{token}/sendDocument",
+                                  data={"chat_id": chat}, files={"document": f}, timeout=60)
+            print(f"TELEGRAM sendDocument -> {r.status_code} {r.text[:200]}")
             ok = ok and r.status_code == 200
     except requests.RequestException as e:
         print("TELEGRAM erreur réseau:", e)
@@ -158,6 +195,15 @@ def main():
         png = os.path.join(a.outdir, f"{tag}_equity.png")
         plot_equity(equity, df, png, f"{sym} {a.interval} — {stats['return_pct']:+.1f} % (buy & hold {stats['buy_hold_pct']:+.1f} %)")
         telegram(summary, png)
+        rep_txt = trades_report(trades, sym, a.interval)
+        if rep_txt:
+            txt_path = os.path.join(a.outdir, f"{tag}_trades_detail.txt")
+            with open(txt_path, "w", encoding="utf-8") as f:
+                f.write(rep_txt + "\n")
+            blocks = rep_txt.split("\n\n")
+            telegram("🧾 Détail des trades (les plus récents) :\n\n" + "\n\n".join(blocks[-4:]))
+            telegram(document=txt_path)
+            telegram(document=os.path.join(a.outdir, f"{tag}_trades.csv"))
         recap.append(f"{sym}: {stats['return_pct']:+.1f} % | {stats['trades']} trades | DD {stats['max_drawdown_pct']:.1f} %")
 
     if len(symbols) > 1:

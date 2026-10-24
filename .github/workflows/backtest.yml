@@ -23,6 +23,9 @@ on:
       fee_pct:
         description: "Frais par ordre (%)"
         default: "0.1"
+      slippage_pct:
+        description: "Glissement / spread par ordre (%) — 0 = aucun"
+        default: "0"
       leverage:
         description: "Levier maximum (les stops serrés demandent du levier pour risquer exactement 1 R)"
         default: "20"
@@ -57,11 +60,12 @@ jobs:
           RISK: ${{ inputs.risk_pct }}
           FEE: ${{ inputs.fee_pct }}
           LEVERAGE: ${{ inputs.leverage }}
+          SLIPPAGE: ${{ inputs.slippage_pct }}
           PARAMS: ${{ inputs.params }}
         run: |
           python backtest/run_backtest.py \
             --symbols "$SYMBOLS" --interval "$INTERVAL" --start "$START" --end "$END" \
-            --risk "$RISK" --fee "$FEE" --leverage "$LEVERAGE" --params "$PARAMS"
+            --risk "$RISK" --fee "$FEE" --leverage "$LEVERAGE" --slippage "$SLIPPAGE" --params "$PARAMS"
 
       - name: Sauvegarde des résultats (trades, courbes)
         if: always()

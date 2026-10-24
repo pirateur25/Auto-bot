@@ -27,6 +27,7 @@ def run_backtest(df, strategy, capital=10000.0, risk_pct=1.0, fee_pct=0.1, slipp
     pos = None
     pending = None
     trades = []
+    skipped = 0
     equity = np.full(n, np.nan)
 
     def close_position(i, price, reason):
@@ -62,12 +63,23 @@ def run_backtest(df, strategy, capital=10000.0, risk_pct=1.0, fee_pct=0.1, slipp
             if valid and tp is not None:
                 valid = (side == "long" and tp > entry) or (side == "short" and tp < entry)
             if valid and (side == "long" or allow_short):
-                qty = (balance * risk_pct / 100.0) / risk_dist
-                qty = min(qty, balance * max_leverage / entry)
+                # Taille calculée pour que la perte AU STOP, frais et glissement compris, soit exactement 1 R.
+                sl_fill = sl * (1 - slip) if side == "long" else sl * (1 + slip)
+                loss_unit = abs(entry - sl_fill) + entry * fee + sl_fill * fee
+                risk_cash = balance * risk_pct / 100.0
+                qty = risk_cash / loss_unit
+                if qty * entry > balance * max_leverage:   # levier insuffisant : on ne prend pas le trade (jamais < 1 R)
+                    skipped += 1
+                    continue_flag = True
+                else:
+                    continue_flag = False
+            else:
+                continue_flag = True
+            if not continue_flag:
                 entry_fee = qty * entry * fee
                 balance -= entry_fee
                 pos = {"side": side, "entry": entry, "sl": sl, "tp": tp, "qty": qty, "entry_i": i,
-                       "entry_time": times.iloc[i], "entry_fee": entry_fee, "risk_amount": qty * risk_dist,
+                       "entry_time": times.iloc[i], "entry_fee": entry_fee, "risk_amount": risk_cash,
                        "meta": sig.get("meta", ""), "info": sig.get("info") or {}}
 
         # 2) gestion de la position sur cette bougie
@@ -108,7 +120,9 @@ def run_backtest(df, strategy, capital=10000.0, risk_pct=1.0, fee_pct=0.1, slipp
 
     trades_df = pd.DataFrame(trades)
     equity_s = pd.Series(equity, index=times, name="equity")
-    return trades_df, equity_s, compute_stats(trades_df, equity_s, df, capital)
+    stats = compute_stats(trades_df, equity_s, df, capital)
+    stats["skipped_leverage"] = skipped
+    return trades_df, equity_s, stats
 
 
 def compute_stats(trades, equity, df, capital):

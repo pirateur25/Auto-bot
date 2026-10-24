@@ -29,6 +29,11 @@ on:
       leverage:
         description: "Levier maximum (les stops serrés demandent du levier pour risquer exactement 1 R)"
         default: "20"
+      confirmations:
+        description: "Confirmations utilisées"
+        type: choice
+        default: "bulle + mss"
+        options: ["bulle + mss", "mss seulement", "bulle seulement"]
       trend_filter:
         description: "Ne trader que dans le sens de la tendance ? (oui / non)"
         type: choice
@@ -75,12 +80,18 @@ jobs:
           LEVERAGE: ${{ inputs.leverage }}
           SLIPPAGE: ${{ inputs.slippage_pct }}
           PARAMS: ${{ inputs.params }}
+          CONFIRMATIONS: ${{ inputs.confirmations }}
           TREND_FILTER: ${{ inputs.trend_filter }}
           TREND_MODE: ${{ inputs.trend_mode }}
           ZZ_TREND: ${{ inputs.zz_atr_trend }}
         run: |
           if [ "$TREND_FILTER" = "non" ]; then TF=0; else TF=1; fi
-          ALL="trend_filter=$TF;trend_mode=$TREND_MODE;zz_atr_trend=$ZZ_TREND;$PARAMS"
+          case "$CONFIRMATIONS" in
+            "mss seulement") CF="mss" ;;
+            "bulle seulement") CF="bubble" ;;
+            *) CF="bubble,mss" ;;
+          esac
+          ALL="confirms=$CF;trend_filter=$TF;trend_mode=$TREND_MODE;zz_atr_trend=$ZZ_TREND;$PARAMS"
           python backtest/run_backtest.py \
             --symbols "$SYMBOLS" --interval "$INTERVAL" --start "$START" --end "$END" \
             --risk "$RISK" --fee "$FEE" --leverage "$LEVERAGE" --slippage "$SLIPPAGE" --params "$ALL"

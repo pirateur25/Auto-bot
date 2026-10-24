@@ -89,6 +89,21 @@ def trades_report(trades, symbol, interval):
     return "\n\n".join(out)
 
 
+def funnel_text():
+    """Où les candidats (bulles / MSS) sont éliminés. Un même candidat est testé sur le range H4 et sur le range H1."""
+    lines = []
+    for kind, label in (("bubble", "Bulles"), ("mss", "MSS")):
+        rows = sorted((r_, n) for (k, r_), n in strategy.DIAG.items() if k == kind)
+        if not rows:
+            continue
+        parts = []
+        for r_, n in rows:
+            name = "détectés" if r_[0] == "0" else ("SIGNAUX" if r_[0] == "9" else r_[2:])
+            parts.append(f"{name} {n}")
+        lines.append(f"  {label} : " + " | ".join(parts))
+    return "Entonnoir (candidats éliminés par chaque filtre) :\n" + "\n".join(lines) if lines else ""
+
+
 def fmt_summary(symbol, interval, source, start, end, s):
     lines = [f"📊 Backtest {symbol} {interval} | {start} → {end or 'aujourd’hui'} | données: {source}",
              f"Capital : {s['capital_start']:.0f} → {s['capital_end']:.0f} ({s['return_pct']:+.2f} %)",
@@ -183,6 +198,7 @@ def main():
                 df, source = data.load_csv(a.csv), "csv"
             else:
                 df, source = data.load(sym, a.interval, a.start, a.end or None, a.source)
+            strategy.DIAG.clear()
             trades, equity, stats = engine.run_backtest(
                 df, strategy, capital=a.capital, risk_pct=a.risk, fee_pct=a.fee, slippage_pct=a.slippage,
                 max_leverage=a.leverage, **strategy.ENGINE)
@@ -194,6 +210,9 @@ def main():
             continue
         summary = fmt_summary(sym, a.interval, source, a.start, a.end, stats)
         summary += "\n" + ov_txt
+        ft = funnel_text()
+        if ft:
+            summary += "\n" + ft
         bd = setup_breakdown(trades)
         if bd:
             summary += "\n" + bd

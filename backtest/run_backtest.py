@@ -74,6 +74,11 @@ def trades_report(trades, symbol, interval):
             lines.append(f"Zone OTE : {_fp(t['ote_zone_low'])} – {_fp(t['ote_zone_high'])}")
             lines.append(f"Fibonacci du TP (jambe) : haut {_fp(t['fib_leg_high'])} ({t['fib_leg_high_time']}) "
                          f"/ bas {_fp(t['fib_leg_low'])} ({t['fib_leg_low_time']}) | niveau {t['tp_fib']}")
+        if g("bubble_band") is not None:
+            side_txt = "bas du corps" if t["side"] == "short" else "haut du corps"
+            band_txt = "bande haute" if t["side"] == "short" else "bande basse"
+            lines.append(f"Bulle : bougie {t['bubble_time']} UTC | {side_txt} {_fp(t['bubble_body_edge'])} vs {band_txt} "
+                         f"{_fp(t['bubble_band'])} | écart {t['bubble_dist_pct']:.3f} %")
         if g("mss_second_extreme") is not None:
             lines.append(f"MSS : 1er extrême {_fp(t['mss_first_extreme'])} → 2e extrême {_fp(t['mss_second_extreme'])} "
                          f"| creux d'origine cassé {_fp(t['mss_origin_level'])}")
@@ -88,6 +93,8 @@ def fmt_summary(symbol, interval, source, start, end, s):
              f"Max drawdown : {s['max_drawdown_pct']:.2f} %"]
     if s["trades"]:
         pf = "∞" if s["profit_factor"] == float("inf") else f"{s['profit_factor']:.2f}"
+        if s.get("skipped_leverage"):
+            lines.append(f"⚠️ {s['skipped_leverage']} trades refusés : levier max insuffisant pour risquer exactement 1 R")
         lines += [f"Trades : {s['trades']} (long {s['longs']} / short {s['shorts']}) | gagnants {s['win_rate_pct']:.1f} %",
                   f"Espérance : {s['avg_r']:+.2f} R par trade | profit factor {pf}",
                   f"Durée moyenne : {s['avg_bars']:.1f} bougies | frais payés : {s['fees_paid']:.0f}"]
@@ -153,7 +160,7 @@ def main():
     ap.add_argument("--risk", type=float, default=1.0, help="risque par trade en %% du capital")
     ap.add_argument("--fee", type=float, default=0.1, help="frais par ordre en %%")
     ap.add_argument("--slippage", type=float, default=0.02, help="glissement en %%")
-    ap.add_argument("--leverage", type=float, default=1.0, help="levier maximum")
+    ap.add_argument("--leverage", type=float, default=20.0, help="levier maximum")
     ap.add_argument("--csv", default="", help="CSV local (time,open,high,low,close,volume) au lieu du téléchargement")
     ap.add_argument("--outdir", default="results")
     ap.add_argument("--params", default="", help="réglages de la stratégie : 'trend_mode=ma;tp_fib=0.62;confirms=bubble'")

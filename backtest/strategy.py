@@ -54,7 +54,7 @@ PARAMS = {
     # --- sortie ---
     "sl_buf_atr": 0.2,          # marge au-dessus du plus haut local, en ATR de l'unité de confirmation
     "tp_fib": 0.705,            # TP = retracement de ce niveau du mouvement de retracement (0.618 à 0.786)
-    "min_rr": 0.0,              # ratio gain/risque minimum (0 = pas de filtre)
+    "min_rr": 1.0,              # ratio gain/risque minimum (0 = pas de filtre)
     "side": "both",             # "both" | "long" | "short"
 }
 
@@ -195,43 +195,54 @@ def bear_range(F, fh, fl, p, tf):
         L[down], Li[down] = zz["ext"][down], zz["ext_i"][down]
         L[up], Li[up] = zz["cur_lo"][up], zz["cur_lo_i"][up]
         valid = (down | up) & (L < H)
-    return {"H": H, "L": L, "Li": Li, "valid": valid}
+    return {"H": H, "Hi": zz["cur_hi_i"], "L": L, "Li": Li, "valid": valid}
 
 
 # ------------------------------------------------------------------ MSS après sweep
 
-def mss_events(h, l, c, k, ratio):
-    """MSS baissier : (1) un creux L2 confirmé, (2) le prix a balayé le sommet H1 précédent (sweep),
-    (3) une bougie CLÔTURE sous L2 (première fois), (4) cette cassure est plus rapide que la montée qui a
-    fait le sweep : (t - bougie du sweep) <= ratio x (bougie du sweep - L2). Causal : un pivot n'est connu
-    qu'k bougies après sa formation. Renvoie (événement, prix du sweep)."""
+def mss_events(h, l, c, k, ratio, o=None):
+    """MSS baissier (définition de Yacine) :
+      1) H1 = un sommet confirmé (fractale de k bougies de chaque côté) ;
+      2) le prix balaie H1 (sweep) et fait un 2e plus haut H2 > H1 ;
+      3) L2 = le plus bas (mèche comprise) entre H1 et H2 = le creux à l'origine de H2 ;
+      4) une bougie BAISSIÈRE dont la CLÔTURE (le corps) passe sous L2 = cassure ;
+      5) cassure plus rapide que la montée : (t - H2) <= ratio x (H2 - L2), en bougies.
+    Dès qu'une clôture passe sous L2 le scénario est consommé (signal ou non). Causal : un sommet n'est
+    connu que k bougies après sa formation. Renvoie (événement, H2, H1, L2)."""
     n = len(h)
     ev = np.zeros(n, bool)
-    h2 = np.full(n, np.nan)
-    highs = []            # sommets confirmés (indice, prix)
-    low_i, low_p = -1, np.nan
-    runmax, runmax_i = -np.inf, -1
-    fired = -1
-    for t in range(2 * k, n):
+    o_h2, o_h1, o_l2 = (np.full(n, np.nan) for _ in range(3))
+    hi_i, hi_p = -1, np.nan            # H1 courant
+    active = False                     # True une fois H1 balayé
+    run_min, run_min_i = np.inf, -1    # plus bas depuis H1
+    runmax, runmax_i = -np.inf, -1     # H2 provisoire
+    l2, l2_i = np.nan, -1
+    for t in range(n):
+        # a) cassure du creux L2 (avec les valeurs d'avant cette bougie)
+        if active and c[t] < l2:
+            if (o is None or c[t] < o[t]) and (t - runmax_i) <= ratio * (runmax_i - l2_i):
+                ev[t], o_h2[t], o_h1[t], o_l2[t] = True, runmax, hi_p, l2
+            active, hi_i, hi_p = False, -1, np.nan
+        # b) nouveau sommet confirmé (seulement si aucun scénario n'est en cours)
         p = t - k
-        if l[p] < l[p - k:p].min() and l[p] <= l[p + 1:t + 1].min():
-            low_i, low_p = p, l[p]
-            seg = h[p + 1:t + 1]
-            runmax, runmax_i = seg.max(), p + 1 + int(seg.argmax())
-        else:
-            if low_i >= 0 and h[t] > runmax:
+        pivot = (not active) and p >= k and h[p] > h[p - k:p].max() and h[p] >= h[p + 1:t + 1].max()
+        if pivot:
+            hi_i, hi_p = p, h[p]
+            seg = l[p + 1:t + 1]
+            run_min_i = p + 1 + int(seg.argmin())
+            run_min = seg.min()
+        elif hi_i >= 0 and l[t] < run_min:
+            run_min, run_min_i = l[t], t
+        # c) sweep de H1, puis suivi du 2e plus haut
+        if hi_i >= 0:
+            if not active:
+                if h[t] > hi_p:
+                    active, runmax, runmax_i = True, h[t], t
+                    l2, l2_i = run_min, run_min_i
+            elif h[t] > runmax:
                 runmax, runmax_i = h[t], t
-        if h[p] > h[p - k:p].max() and h[p] >= h[p + 1:t + 1].max():
-            highs.append((p, h[p]))
-        if low_i >= 0 and low_i != fired and c[t] < low_p <= c[t - 1]:
-            h1 = None
-            for hi, hp in reversed(highs):
-                if hi < low_i:
-                    h1 = hp
-                    break
-            if h1 is not None and runmax > h1 and (t - runmax_i) <= ratio * (runmax_i - low_i):
-                ev[t], h2[t], fired = True, runmax, low_i
-    return ev, h2
+                l2, l2_i = run_min, run_min_i
+    return ev, o_h2, o_h1, o_l2
 
 
 # ------------------------------------------------------------------ construction des signaux
@@ -272,12 +283,12 @@ def run_world(F, B, jm, p, sign):
         if "bubble" in confirms and len(vo) > 1:
             bub = V["bub_up"] if sign == 1 else V["bub_dn"]
             idx = np.where(bub[:-1] & (vc[1:] < vo[1:]))[0] + 1  # bulle puis bougie baissière
-            cands += [(int(j), "bubble", None) for j in idx if okY[j]]
+            cands += [(int(j), "bubble", None, None) for j in idx if okY[j]]
         if "mss" in confirms:
-            ev, h2 = mss_events(vh, vl, vc, p["mss_fractal"], p["mss_speed_ratio"])
-            cands += [(int(j), "mss", h2[j]) for j in np.where(ev)[0] if okY[j]]
+            ev, h2, h1m, l2m = mss_events(vh, vl, vc, p["mss_fractal"], p["mss_speed_ratio"], vo)
+            cands += [(int(j), "mss", h2[j], (h1m[j], h2[j], l2m[j])) for j in np.where(ev)[0] if okY[j]]
         cands.sort(key=lambda x: x[0])
-        for j, kind, sweep in cands:
+        for j, kind, sweep, mssp in cands:
             i = int(iY[j])
             jt = jm[tT][i]
             if jt < 0 or not bear[jt]:
@@ -315,7 +326,29 @@ def run_world(F, B, jm, p, sign):
                     continue
                 if p["min_rr"] and (entry - tp) < p["min_rr"] * (sl - entry):
                     continue
-                out.append((i, sign * sl, sign * tp, f"{kind}{Y}|{R}"))
+                # ---- infos détaillées du trade (prix réels, pas en miroir)
+                def bidx(ci, arr, fn):
+                    a0 = int(np.searchsorted(B["open_ns"], Rf["open_ns"][ci], side="left"))
+                    a1 = int(np.searchsorted(B["open_ns"], Rf["close_ns"][ci], side="left"))
+                    return a0 + int(fn(arr[a0:a1])) if a1 > a0 else -1
+                def ts(ix):
+                    return pd.Timestamp(int(B["open_ns"][ix]), tz="UTC").strftime("%Y-%m-%d %H:%M") if ix >= 0 else ""
+                hi_b = bidx(int(rg["Hi"][jr]), bh, np.argmax)
+                k_pk = bL + 1 + int(np.argmax(after_h))
+                pts = sorted([(sign * H, ts(hi_b)), (sign * L, ts(bL))], key=lambda x: x[0])
+                leg = sorted([(sign * peak, ts(k_pk)), (sign * bl[bL], ts(bL))], key=lambda x: x[0])
+                z = sorted([sign * zl, sign * zh])
+                info = {"signal_time": pd.Timestamp(int(B["close_ns"][i]), tz="UTC").strftime("%Y-%m-%d %H:%M"),
+                        "confirm": f"{kind}{Y}", "range_tf": R, "trend_tf": tT,
+                        "fib_range_high": pts[1][0], "fib_range_high_time": pts[1][1],
+                        "fib_range_low": pts[0][0], "fib_range_low_time": pts[0][1],
+                        "ote_zone_low": z[0], "ote_zone_high": z[1],
+                        "fib_leg_high": leg[1][0], "fib_leg_high_time": leg[1][1],
+                        "fib_leg_low": leg[0][0], "fib_leg_low_time": leg[0][1], "tp_fib": p["tp_fib"]}
+                if mssp is not None:
+                    info.update({"mss_first_extreme": sign * mssp[0], "mss_second_extreme": sign * mssp[1],
+                                 "mss_origin_level": sign * mssp[2]})
+                out.append((i, sign * sl, sign * tp, f"{kind}{Y}|{R}", info))
                 break
     return out, float(bear.mean())
 
@@ -343,7 +376,7 @@ def prepare(df):
         if p["side"] not in ("both", name):
             continue
         res, share = run_world(F, B, jm, p, sign)
-        setups += [(i, side, sl, tp, code) for i, sl, tp, code in res]
+        setups += [(i, side, sl, tp, code, info) for i, sl, tp, code, info in res]
         label = "baissière" if sign == 1 else "haussière"
         print(f"Tendance {p['trend_tf']} {label} ({p['trend_mode']}) : {share * 100:.1f} % du temps | signaux {name} : {len(res)}")
 
@@ -351,10 +384,11 @@ def prepare(df):
     sig_sl = np.full(nb, np.nan)
     sig_tp = np.full(nb, np.nan)
     sig_code = np.array([""] * nb, dtype=object)
-    for i, side, sl, tp, code in sorted(setups, key=lambda x: x[0]):
+    sig_info = np.array([None] * nb, dtype=object)
+    for i, side, sl, tp, code, info in sorted(setups, key=lambda x: x[0]):
         if sig_side[i] == 0:
-            sig_side[i], sig_sl[i], sig_tp[i], sig_code[i] = side, sl, tp, code
-    df["sig_side"], df["sig_sl"], df["sig_tp"], df["sig_code"] = sig_side, sig_sl, sig_tp, sig_code
+            sig_side[i], sig_sl[i], sig_tp[i], sig_code[i], sig_info[i] = side, sl, tp, code, info
+    df["sig_side"], df["sig_sl"], df["sig_tp"], df["sig_code"], df["sig_info"] = sig_side, sig_sl, sig_tp, sig_code, sig_info
     return df
 
 
@@ -362,4 +396,4 @@ def signal(d, i):
     s = d["sig_side"][i]
     if s == 0:
         return None
-    return {"side": "long" if s > 0 else "short", "sl": d["sig_sl"][i], "tp": d["sig_tp"][i], "meta": d["sig_code"][i]}
+    return {"side": "long" if s > 0 else "short", "sl": d["sig_sl"][i], "tp": d["sig_tp"][i], "meta": d["sig_code"][i], "info": d["sig_info"][i]}

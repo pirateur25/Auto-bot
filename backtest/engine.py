@@ -2,7 +2,7 @@
 # Moteur de simulation bougie par bougie.
 #
 # Règles (volontairement prudentes pour ne pas obtenir de résultats trop beaux) :
-#  - Le signal est calculé à la CLÔTURE de la bougie i ; l'ordre est exécuté à l'OUVERTURE de la bougie i+1.
+#  - Le signal est calculé à la CLÔTURE de la bougie i ; l'entrée se fait à ce prix de clôture (la gestion SL/TP commence à la bougie i+1).
 #  - Frais sur chaque ordre (entrée et sortie) + glissement sur les entrées et les stop-loss.
 #  - Si SL et TP sont touchés dans la même bougie : on suppose que le SL est touché en premier.
 #  - Si une bougie s'ouvre au-delà du SL (gap), la sortie se fait à l'ouverture (donc pire que le SL).
@@ -53,7 +53,9 @@ def run_backtest(df, strategy, capital=10000.0, risk_pct=1.0, fee_pct=0.1, slipp
         if pending is not None and pos is None:
             sig, pending = pending, None
             side = sig["side"]
-            entry = o[i] * (1 + slip) if side == "long" else o[i] * (1 - slip)
+            ref = sig.get("entry")          # prix d'entrée voulu : la clôture de la bougie de confirmation
+            ref = o[i] if ref is None else float(ref)
+            entry = ref * (1 + slip) if side == "long" else ref * (1 - slip)
             sl = float(sig["sl"])
             tp = sig.get("tp")
             risk_dist = abs(entry - sl)
@@ -84,7 +86,7 @@ def run_backtest(df, strategy, capital=10000.0, risk_pct=1.0, fee_pct=0.1, slipp
 
         # 2) gestion de la position sur cette bougie
         if pos is not None:
-            gap = i > pos["entry_i"]
+            gap = True   # l'ordre est ouvert à la clôture précédente : un gap d'ouverture est possible dès cette bougie
             sl, tp = pos["sl"], pos["tp"]
             if pos["side"] == "long":
                 if l[i] <= sl:

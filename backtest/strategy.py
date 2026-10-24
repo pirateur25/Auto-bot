@@ -264,6 +264,8 @@ def run_world(F, B, jm, p, sign):
     T = F[tT]
     _, th, tl, tc = view(T)
     bear = trend_bear(T, th, tl, tc, p)
+    zzT = zigzag(th, tl, T["atr"], p.get("zz_atr_" + tT, 2.0))                 # pivots utilisés par la loi de Dow (pour les fiches)
+    emaT = pd.Series(tc).ewm(span=p["ma_len"], adjust=False).mean().to_numpy()
     ranges = {}
     for R in _csv(p["range_tfs"]):
         if R in F:
@@ -346,6 +348,14 @@ def run_world(F, B, jm, p, sign):
                         "ote_zone_low": z[0], "ote_zone_high": z[1],
                         "fib_leg_high": leg[1][0], "fib_leg_high_time": leg[1][1],
                         "fib_leg_low": leg[0][0], "fib_leg_low_time": leg[0][1], "tp_fib": p["tp_fib"]}
+                jt_ = int(jt)
+                if sign == 1:
+                    ph_, ch_, pl_, cl_ = (zzT[k][jt_] for k in ("prev_hi", "cur_hi", "prev_lo", "cur_lo"))
+                else:   # monde en miroir : les sommets du monde sont les creux réels
+                    ph_, ch_, pl_, cl_ = (-zzT[k][jt_] for k in ("prev_lo", "cur_lo", "prev_hi", "cur_hi"))
+                info.update({"trend_dir": "BAISSIERE" if sign == 1 else "HAUSSIERE", "trend_mode": p["trend_mode"],
+                             "trend_prev_high": ph_, "trend_last_high": ch_, "trend_prev_low": pl_, "trend_last_low": cl_,
+                             "trend_ema": sign * emaT[jt_], "trend_close": sign * tc[jt_]})
                 if kind == "bubble":   # chiffres de la bulle, pour les comparer au graphique
                     jb = j - 1
                     if sign == 1:
@@ -353,7 +363,7 @@ def run_world(F, B, jm, p, sign):
                     else:
                         edge, band = max(V["o"][jb], V["c"][jb]), V["bb_dn"][jb]
                     info.update({"bubble_time": pd.Timestamp(int(V["open_ns"][jb]), tz="UTC").strftime("%Y-%m-%d %H:%M"),
-                                 "bubble_body_edge": edge, "bubble_band": band,
+                                 "bubble_kind": "HAUTE" if sign == 1 else "BASSE", "bubble_body_edge": edge, "bubble_band": band,
                                  "bubble_dist_pct": abs(edge - band) / edge * 100})
                 if mssp is not None:
                     info.update({"mss_first_extreme": sign * mssp[0], "mss_second_extreme": sign * mssp[1],

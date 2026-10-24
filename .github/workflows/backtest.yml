@@ -29,6 +29,19 @@ on:
       leverage:
         description: "Levier maximum (les stops serrés demandent du levier pour risquer exactement 1 R)"
         default: "20"
+      trend_filter:
+        description: "Ne trader que dans le sens de la tendance ? (oui / non)"
+        type: choice
+        default: "oui"
+        options: ["oui", "non"]
+      trend_mode:
+        description: "Méthode de tendance : dow (structure), ma (moyenne mobile) ou both (les deux)"
+        type: choice
+        default: "dow"
+        options: ["dow", "ma", "both"]
+      zz_atr_trend:
+        description: "Lenteur de la tendance (ZigZag en ATR). Plus grand = tendance plus longue (essayer 2, 3, 4, 6)"
+        default: "2"
       params:
         description: "Réglages stratégie (ex: trend_mode=ma;tp_fib=0.62;confirms=bubble). Vide = défaut"
         default: ""
@@ -62,10 +75,15 @@ jobs:
           LEVERAGE: ${{ inputs.leverage }}
           SLIPPAGE: ${{ inputs.slippage_pct }}
           PARAMS: ${{ inputs.params }}
+          TREND_FILTER: ${{ inputs.trend_filter }}
+          TREND_MODE: ${{ inputs.trend_mode }}
+          ZZ_TREND: ${{ inputs.zz_atr_trend }}
         run: |
+          if [ "$TREND_FILTER" = "non" ]; then TF=0; else TF=1; fi
+          ALL="trend_filter=$TF;trend_mode=$TREND_MODE;zz_atr_trend=$ZZ_TREND;$PARAMS"
           python backtest/run_backtest.py \
             --symbols "$SYMBOLS" --interval "$INTERVAL" --start "$START" --end "$END" \
-            --risk "$RISK" --fee "$FEE" --leverage "$LEVERAGE" --slippage "$SLIPPAGE" --params "$PARAMS"
+            --risk "$RISK" --fee "$FEE" --leverage "$LEVERAGE" --slippage "$SLIPPAGE" --params "$ALL"
 
       - name: Sauvegarde des résultats (trades, courbes)
         if: always()

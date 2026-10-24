@@ -67,7 +67,10 @@ def trades_report(trades, symbol, interval):
                  f"Entrée : {str(t['entry_time'])[:16]} UTC à {_fp(t['entry'])} | sortie {str(t['exit_time'])[:16]} à {_fp(t['exit'])}",
                  f"SL {_fp(t['sl'])} | TP {_fp(t['tp'])} | {t['bars']} bougies {interval}"]
         if g("confirm"):
-            lines.append(f"Confirmation : {t['confirm']} (clôturée {t['signal_time']} UTC) | tendance {t['trend_tf']} | range {t['range_tf']}")
+            lines.append(f"Confirmation : {t['confirm']} (clôturée {t['signal_time']} UTC) | range {t['range_tf']}")
+        if g("trend_dir"):
+            lines.append(f"Tendance {t['trend_tf']} {t['trend_dir']} ({t['trend_mode']}) → {t['side'].upper()} | sommets {_fp(t['trend_prev_high'])} → {_fp(t['trend_last_high'])}"
+                         f" | creux {_fp(t['trend_prev_low'])} → {_fp(t['trend_last_low'])} | clôture {_fp(t['trend_close'])} vs EMA {_fp(t['trend_ema'])}")
         if g("fib_range_high") is not None:
             lines.append(f"Fibonacci du range ({t['range_tf']}) : haut {_fp(t['fib_range_high'])} ({t['fib_range_high_time']}) "
                          f"/ bas {_fp(t['fib_range_low'])} ({t['fib_range_low_time']})")
@@ -75,10 +78,10 @@ def trades_report(trades, symbol, interval):
             lines.append(f"Fibonacci du TP (jambe) : haut {_fp(t['fib_leg_high'])} ({t['fib_leg_high_time']}) "
                          f"/ bas {_fp(t['fib_leg_low'])} ({t['fib_leg_low_time']}) | niveau {t['tp_fib']}")
         if g("bubble_band") is not None:
-            side_txt = "bas du corps" if t["side"] == "short" else "haut du corps"
-            band_txt = "bande haute" if t["side"] == "short" else "bande basse"
-            lines.append(f"Bulle : bougie {t['bubble_time']} UTC | {side_txt} {_fp(t['bubble_body_edge'])} vs {band_txt} "
-                         f"{_fp(t['bubble_band'])} | écart {t['bubble_dist_pct']:.3f} %")
+            edge_txt = "bas du corps" if t["bubble_kind"] == "HAUTE" else "haut du corps"
+            band_txt = "bande haute" if t["bubble_kind"] == "HAUTE" else "bande basse"
+            lines.append(f"Bulle {t['bubble_kind']} : bougie {t['bubble_time']} UTC | {edge_txt} {_fp(t['bubble_body_edge'])} "
+                         f"vs {band_txt} {_fp(t['bubble_band'])} | écart {t['bubble_dist_pct']:.3f} %")
         if g("mss_second_extreme") is not None:
             lines.append(f"MSS : 1er extrême {_fp(t['mss_first_extreme'])} → 2e extrême {_fp(t['mss_second_extreme'])} "
                          f"| creux d'origine cassé {_fp(t['mss_origin_level'])}")

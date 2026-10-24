@@ -162,7 +162,7 @@ def main():
     ap.add_argument("--capital", type=float, default=10000)
     ap.add_argument("--risk", type=float, default=1.0, help="risque par trade en %% du capital")
     ap.add_argument("--fee", type=float, default=0.1, help="frais par ordre en %%")
-    ap.add_argument("--slippage", type=float, default=0.02, help="glissement en %%")
+    ap.add_argument("--slippage", type=float, default=0.0, help="glissement en %%")
     ap.add_argument("--leverage", type=float, default=20.0, help="levier maximum")
     ap.add_argument("--csv", default="", help="CSV local (time,open,high,low,close,volume) au lieu du téléchargement")
     ap.add_argument("--outdir", default="results")

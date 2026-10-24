@@ -46,14 +46,14 @@ PARAMS = {
     "bb_mult": 2.0,
     # bulle validée = corps hors bande ET distance >= seuil (en % du prix). Seuils tirés de ton tableau :
     "bubble_min_pct_5m": 0.045,
-    "bubble_min_pct_15m": 0.01,
-    "bubble_min_pct_1h": 0.05,
+    "bubble_min_pct_15m": 0.035,
+    "bubble_min_pct_1h": 0.15,
     "bubble_min_sigma": 0.0,    # seuil optionnel en écarts-types (0 = désactivé)
     "mss_fractal": 2,           # un creux/sommet est confirmé après N bougies de chaque côté
     "mss_speed_ratio": 1.0,     # cassure en <= ratio x (durée de la montée du sweep)
     # --- sortie ---
     "sl_buf_atr": 0.2,          # marge au-dessus du plus haut local, en ATR de l'unité de confirmation
-    "tp_fib": 0.705,            # TP = retracement de ce niveau du mouvement de retracement (0.618 à 0.786)
+    "tp_fib": 0.618,            # TP = retracement de ce niveau du mouvement de retracement (0.618 à 0.786)
     "min_rr": 1.0,              # ratio gain/risque minimum (0 = pas de filtre)
     "side": "both",             # "both" | "long" | "short"
 }
@@ -93,6 +93,7 @@ def add_indicators(f, p, tf):
     mid = s.rolling(p["bb_len"]).mean()
     sd = s.rolling(p["bb_len"]).std(ddof=0).to_numpy()  # écart-type de population, comme TradingView
     up, dn = (mid + p["bb_mult"] * sd).to_numpy(), (mid - p["bb_mult"] * sd).to_numpy()
+    f["bb_up"], f["bb_dn"] = up, dn
     body_lo, body_hi = np.minimum(o, c), np.maximum(o, c)
     thr = p.get(f"bubble_min_pct_{tf}", 0.0)
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -345,6 +346,15 @@ def run_world(F, B, jm, p, sign):
                         "ote_zone_low": z[0], "ote_zone_high": z[1],
                         "fib_leg_high": leg[1][0], "fib_leg_high_time": leg[1][1],
                         "fib_leg_low": leg[0][0], "fib_leg_low_time": leg[0][1], "tp_fib": p["tp_fib"]}
+                if kind == "bubble":   # chiffres de la bulle, pour les comparer au graphique
+                    jb = j - 1
+                    if sign == 1:
+                        edge, band = min(V["o"][jb], V["c"][jb]), V["bb_up"][jb]
+                    else:
+                        edge, band = max(V["o"][jb], V["c"][jb]), V["bb_dn"][jb]
+                    info.update({"bubble_time": pd.Timestamp(int(V["open_ns"][jb]), tz="UTC").strftime("%Y-%m-%d %H:%M"),
+                                 "bubble_body_edge": edge, "bubble_band": band,
+                                 "bubble_dist_pct": abs(edge - band) / edge * 100})
                 if mssp is not None:
                     info.update({"mss_first_extreme": sign * mssp[0], "mss_second_extreme": sign * mssp[1],
                                  "mss_origin_level": sign * mssp[2]})

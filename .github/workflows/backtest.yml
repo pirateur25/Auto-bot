@@ -24,8 +24,8 @@ on:
         description: "Frais par ordre (%)"
         default: "0.1"
       leverage:
-        description: "Levier maximum"
-        default: "1"
+        description: "Levier maximum (les stops serrés demandent du levier pour risquer exactement 1 R)"
+        default: "20"
       params:
         description: "Réglages stratégie (ex: trend_mode=ma;tp_fib=0.62;confirms=bubble). Vide = défaut"
         default: ""

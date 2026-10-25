@@ -34,6 +34,9 @@ on:
         type: choice
         default: "bulle + mss"
         options: ["bulle + mss", "mss seulement", "bulle seulement"]
+      mss_swing_bars:
+        description: "MSS : nb de bougies de chaque côté pour valider un plus haut / un creux (2 = petits, 5-12 = plus marqués)"
+        default: "2"
       trend_filter:
         description: "Ne trader que dans le sens de la tendance ? (oui / non)"
         type: choice
@@ -81,6 +84,7 @@ jobs:
           SLIPPAGE: ${{ inputs.slippage_pct }}
           PARAMS: ${{ inputs.params }}
           CONFIRMATIONS: ${{ inputs.confirmations }}
+          MSS_K: ${{ inputs.mss_swing_bars }}
           TREND_FILTER: ${{ inputs.trend_filter }}
           TREND_MODE: ${{ inputs.trend_mode }}
           ZZ_TREND: ${{ inputs.zz_atr_trend }}
@@ -91,7 +95,7 @@ jobs:
             "bulle seulement") CF="bubble" ;;
             *) CF="bubble,mss" ;;
           esac
-          ALL="confirms=$CF;trend_filter=$TF;trend_mode=$TREND_MODE;zz_atr_trend=$ZZ_TREND;$PARAMS"
+          ALL="confirms=$CF;mss_fractal=$MSS_K;trend_filter=$TF;trend_mode=$TREND_MODE;zz_atr_trend=$ZZ_TREND;$PARAMS"
           python backtest/run_backtest.py \
             --symbols "$SYMBOLS" --interval "$INTERVAL" --start "$START" --end "$END" \
             --risk "$RISK" --fee "$FEE" --leverage "$LEVERAGE" --slippage "$SLIPPAGE" --params "$ALL"

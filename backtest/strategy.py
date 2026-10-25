@@ -21,10 +21,14 @@
 # Les paramètres se modifient ici, ou depuis le workflow GitHub (champ « params »), ex :
 #   trend_mode=ma;tp_fib=0.62;confirms=bubble
 
-import bisect
-
 import numpy as np
 import pandas as pd
+
+try:                                   # Numba (si installé) accélère fortement le MSS ; sinon le même code tourne en Python pur
+    from numba import njit as _njit
+except ImportError:                    # pragma: no cover
+    def _njit(f):
+        return f
 
 PARAMS = {
     # --- tendance ---
@@ -56,6 +60,9 @@ PARAMS = {
     "bubble_min_pct_1h": 0.15,
     "bubble_min_sigma": 0.0,    # seuil optionnel en écarts-types (0 = désactivé)
     "mss_fractal": 2,           # un creux/sommet est confirmé après N bougies de chaque côté
+    "mss_trough_pivot": 0,      # 0 = le creux L2 est simplement le plus bas entre H1 et H2 ; 1 = il doit aussi être confirmé sur N bougies
+    "mss_min_sweep_pct": 0.0,   # H2 doit dépasser H1 d'au moins ce % (0 = n'importe quel dépassement)
+    "min_sl_pct": 0.0,          # distance minimale du stop en % du prix d'entrée (0 = pas de minimum)
     "mss_speed_ratio": 1.0,     # cassure en <= ratio x (durée de la montée du sweep)
     # --- sortie ---
     "sl_buf_atr": 0.2,          # marge au-dessus du plus haut local, en ATR de l'unité de confirmation
@@ -221,65 +228,120 @@ def bear_range(F, fh, fl, p, tf):
 
 # ------------------------------------------------------------------ MSS après sweep
 
-def mss_events(h, l, c, k, ratio, o=None):
+@_njit
+def _mss_core(h, l, c, o, has_o, k, ratio, trough_pivot, min_sweep_pct):
+    n = len(h)
+    ev = np.zeros(n, np.bool_)
+    o_h2 = np.full(n, np.nan)
+    o_h1 = np.full(n, np.nan)
+    o_l2 = np.full(n, np.nan)
+    piv_i = np.empty(n, np.int64)
+    piv_p = np.empty(n)
+    npv = 0
+    low_i = np.empty(n, np.int64)
+    low_p = np.empty(n)
+    nlw = 0
+    runM, runM_i = -np.inf, -1
+    last_h1, last_h2 = -1, -1                    # dernier couple (H1, H2) consommé
+    ck_h1, ck_h2, ck_nl = -2, -2, -2             # clé du creux en cache
+    cL, cLi = np.nan, -1
+    ms = min_sweep_pct / 100.0
+    for t in range(n):
+        p = t - k
+        if p >= k:
+            # creux confirmé ?
+            lmin = l[p - k]
+            for q in range(p - k + 1, p):
+                if l[q] < lmin:
+                    lmin = l[q]
+            rmin = l[p + 1]
+            for q in range(p + 2, t + 1):
+                if l[q] < rmin:
+                    rmin = l[q]
+            if l[p] < lmin and l[p] <= rmin:
+                low_i[nlw] = p
+                low_p[nlw] = l[p]
+                nlw += 1
+            # sommet confirmé ?
+            lmax = h[p - k]
+            for q in range(p - k + 1, p):
+                if h[q] > lmax:
+                    lmax = h[q]
+            rmax = h[p + 1]
+            for q in range(p + 2, t + 1):
+                if h[q] > rmax:
+                    rmax = h[q]
+            if h[p] > lmax and h[p] >= rmax:
+                piv_i[npv] = p
+                piv_p[npv] = h[p]
+                npv += 1
+                runM = h[p + 1]
+                runM_i = p + 1
+                for q in range(p + 2, t + 1):
+                    if h[q] > runM:
+                        runM, runM_i = h[q], q
+            elif npv > 0 and h[t] > runM:
+                runM, runM_i = h[t], t
+        elif npv > 0 and h[t] > runM:
+            runM, runM_i = h[t], t
+        if npv == 0:
+            continue
+        ia, pa = piv_i[npv - 1], piv_p[npv - 1]
+        if runM > pa and abs(runM - pa) >= abs(pa) * ms:
+            h1i, h1p, h2i, h2p = ia, pa, runM_i, runM
+        elif npv >= 2 and pa > piv_p[npv - 2] and abs(pa - piv_p[npv - 2]) >= abs(piv_p[npv - 2]) * ms:
+            h1i, h1p, h2i, h2p = piv_i[npv - 2], piv_p[npv - 2], ia, pa
+        else:
+            continue
+        nl_key = nlw if trough_pivot else 0
+        if h1i != ck_h1 or h2i != ck_h2 or nl_key != ck_nl:
+            ck_h1, ck_h2, ck_nl = h1i, h2i, nl_key
+            if trough_pivot:
+                lo = np.searchsorted(low_i[:nlw], h1i, side="right")
+                hi = np.searchsorted(low_i[:nlw], h2i, side="left")
+                if hi <= lo:
+                    cL, cLi = np.nan, -1
+                else:
+                    j = lo
+                    for q in range(lo + 1, hi):
+                        if low_p[q] < low_p[j]:
+                            j = q
+                    cL, cLi = low_p[j], low_i[j]
+            else:
+                j = h1i + 1
+                for q in range(h1i + 2, h2i + 1):
+                    if l[q] < l[j]:
+                        j = q
+                cL, cLi = l[j], j
+        if cL != cL:
+            continue
+        if t > h2i and c[t] < cL and not (h1i == last_h1 and h2i == last_h2):
+            last_h1, last_h2 = h1i, h2i
+            if ((not has_o) or c[t] < o[t]) and (t - h2i) <= ratio * (h2i - cLi):
+                ev[t] = True
+                o_h2[t] = h2p
+                o_h1[t] = h1p
+                o_l2[t] = cL
+    return ev, o_h2, o_h1, o_l2
+
+
+def mss_events(h, l, c, k, ratio, o=None, trough_pivot=0, min_sweep_pct=0.0):
     """MSS baissier (définition de Yacine), recalculé en continu sur les sommets VOISINS.
     k = nombre de bougies de CHAQUE côté qui doivent être moins extrêmes pour valider un sommet (ou un creux).
       1) H1 = le dernier sommet confirmé (plus haut que les k bougies avant et les k bougies après) ;
       2) H2 = un plus haut qui dépasse H1 (sweep). H2 peut être encore provisoire : c'est le plus haut depuis H1 ;
-      3) L2 = le creux CONFIRMÉ (plus bas que les k bougies avant et après, mèche comprise) entre H1 et H2, le plus bas
-         s'il y en a plusieurs : c'est le creux à l'origine de H2. Sans creux confirmé entre eux, pas de MSS ;
+      3) L2 = le plus bas (mèche comprise) entre H1 et H2 : c'est le creux à l'origine de H2. Avec trough_pivot=1 il doit en
+         plus être confirmé (plus bas que les k bougies avant et après) ; sans creux confirmé, pas de MSS ;
       4) une bougie BAISSIÈRE dont la CLÔTURE (le corps) passe sous L2 = cassure ;
       5) cassure plus rapide que la montée : (t - H2) <= ratio x (H2 - L2), en bougies.
     Chaque couple (H1, H2) ne peut se déclencher qu'une fois. Causal : un sommet ou un creux n'est connu que k bougies
     après sa formation. Renvoie (événement, H2, H1, L2)."""
-    n = len(h)
-    ev = np.zeros(n, bool)
-    o_h2, o_h1, o_l2 = (np.full(n, np.nan) for _ in range(3))
-    piv = []                        # sommets confirmés (indice, prix)
-    lows = []                       # creux confirmés (indice, prix)
-    low_idx = []                    # leurs indices (recherche rapide)
-    runM, runM_i = -np.inf, -1      # plus haut depuis le dernier sommet confirmé
-    consumed = set()
-    ckey, cL, cLi = None, np.nan, -1
-    for t in range(n):
-        p = t - k
-        if p >= k:
-            if l[p] < l[p - k:p].min() and l[p] <= l[p + 1:t + 1].min():
-                lows.append((p, l[p]))
-                low_idx.append(p)
-            if h[p] > h[p - k:p].max() and h[p] >= h[p + 1:t + 1].max():
-                piv.append((p, h[p]))
-                seg = h[p + 1:t + 1]
-                runM, runM_i = seg.max(), p + 1 + int(seg.argmax())
-            elif piv and h[t] > runM:
-                runM, runM_i = h[t], t
-        elif piv and h[t] > runM:
-            runM, runM_i = h[t], t
-        if not piv:
-            continue
-        ia, pa = piv[-1]
-        if runM > pa:                                   # H2 provisoire : plus haut depuis le dernier sommet
-            h1i, h1p, h2i, h2p = ia, pa, runM_i, runM
-        elif len(piv) >= 2 and pa > piv[-2][1]:        # H2 = dernier sommet confirmé, H1 = celui d'avant
-            h1i, h1p = piv[-2]
-            h2i, h2p = ia, pa
-        else:
-            continue
-        key = (h1i, h2i, len(lows))
-        if key != ckey:
-            btw = lows[bisect.bisect_right(low_idx, h1i):bisect.bisect_left(low_idx, h2i)]
-            if not btw:
-                ckey, cL = key, np.nan
-            else:
-                cLi, cL = min(btw, key=lambda z: z[1])
-                ckey = key
-        if cL != cL:
-            continue
-        if t > h2i and c[t] < cL and (h1i, h2i) not in consumed:
-            consumed.add((h1i, h2i))
-            if (o is None or c[t] < o[t]) and (t - h2i) <= ratio * (h2i - cLi):
-                ev[t], o_h2[t], o_h1[t], o_l2[t] = True, h2p, h1p, cL
-    return ev, o_h2, o_h1, o_l2
+    h = np.ascontiguousarray(h, dtype=np.float64)
+    l = np.ascontiguousarray(l, dtype=np.float64)
+    c = np.ascontiguousarray(c, dtype=np.float64)
+    has_o = o is not None
+    oo = np.ascontiguousarray(o, dtype=np.float64) if has_o else c
+    return _mss_core(h, l, c, oo, has_o, int(k), float(ratio), bool(trough_pivot), float(min_sweep_pct))
 
 
 # ------------------------------------------------------------------ construction des signaux
@@ -331,7 +393,8 @@ def run_world(F, B, jm, p, sign):
             idx = np.where(bub[:-1] & (vc[1:] < vo[1:]))[0] + 1  # bulle puis bougie baissière
             cands += [(int(j), "bubble", None, None) for j in idx if okY[j]]
         if "mss" in confirms:
-            ev, h2, h1m, l2m = mss_events(vh, vl, vc, p["mss_fractal"], p["mss_speed_ratio"], vo)
+            ev, h2, h1m, l2m = mss_events(vh, vl, vc, p["mss_fractal"], p["mss_speed_ratio"], vo,
+                                       p["mss_trough_pivot"], p["mss_min_sweep_pct"])
             cands += [(int(j), "mss", h2[j], (h1m[j], h2[j], l2m[j])) for j in np.where(ev)[0] if okY[j]]
             _d("mss_brut", "0 événements MSS " + Y)
         cands.sort(key=lambda x: x[0])
@@ -379,6 +442,9 @@ def run_world(F, B, jm, p, sign):
                 entry = vc[j]
                 if not (tp < entry < sl):
                     _d(kind, "7 entrée déjà sous le TP")
+                    continue
+                if p["min_sl_pct"] and (sl - entry) / abs(entry) * 100 < p["min_sl_pct"]:
+                    _d(kind, "8 stop plus serré que min_sl_pct")
                     continue
                 if p["min_rr"] and (entry - tp) < p["min_rr"] * (sl - entry):
                     _d(kind, "8 ratio gain/risque trop faible")

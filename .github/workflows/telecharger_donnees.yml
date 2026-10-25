@@ -1,0 +1,53 @@
+name: Telecharger donnees
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Paires séparées par des virgules (ex: BTCUSDT ou BTCUSDT,ETHUSDT)"
+        default: "BTCUSDT"
+      interval:
+        description: "Unité de temps"
+        type: choice
+        default: "5m"
+        options: ["5m", "15m", "1h"]
+      start:
+        description: "Date de début (AAAA-MM-JJ)"
+        default: "2021-01-01"
+      end:
+        description: "Date de fin (vide = aujourd'hui)"
+        default: ""
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Configuration de Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installation des dependances
+        run: pip install requests pandas numpy
+
+      - name: Telechargement et envoi sur Telegram
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          SYMBOLS: ${{ inputs.symbols }}
+          INTERVAL: ${{ inputs.interval }}
+          START: ${{ inputs.start }}
+          END: ${{ inputs.end }}
+        run: |
+          python backtest/export_data.py --symbols "$SYMBOLS" --interval "$INTERVAL" --start "$START" --end "$END"
+
+      - name: Sauvegarde des donnees (artefact GitHub)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: donnees
+          path: data_out/

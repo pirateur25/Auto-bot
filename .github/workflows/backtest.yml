@@ -37,6 +37,9 @@ on:
       mss_swing_bars:
         description: "MSS : nb de bougies de chaque côté pour valider un plus haut / un creux (2 = petits, 5-12 = plus marqués)"
         default: "2"
+      sl_min_pct:
+        description: "Stop minimum en % du prix (0 = aucun ; essayer 0.3 ou 0.5 pour éviter les stops trop serrés)"
+        default: "0"
       trend_filter:
         description: "Ne trader que dans le sens de la tendance ? (oui / non)"
         type: choice
@@ -68,7 +71,7 @@ jobs:
           python-version: '3.11'
 
       - name: Installation des dépendances
-        run: pip install requests pandas numpy matplotlib
+        run: pip install requests pandas numpy matplotlib numba
 
       - name: Lancement de la simulation
         env:
@@ -85,6 +88,7 @@ jobs:
           PARAMS: ${{ inputs.params }}
           CONFIRMATIONS: ${{ inputs.confirmations }}
           MSS_K: ${{ inputs.mss_swing_bars }}
+          SL_MIN: ${{ inputs.sl_min_pct }}
           TREND_FILTER: ${{ inputs.trend_filter }}
           TREND_MODE: ${{ inputs.trend_mode }}
           ZZ_TREND: ${{ inputs.zz_atr_trend }}
@@ -95,7 +99,7 @@ jobs:
             "bulle seulement") CF="bubble" ;;
             *) CF="bubble,mss" ;;
           esac
-          ALL="confirms=$CF;mss_fractal=$MSS_K;trend_filter=$TF;trend_mode=$TREND_MODE;zz_atr_trend=$ZZ_TREND;$PARAMS"
+          ALL="confirms=$CF;mss_fractal=$MSS_K;min_sl_pct=$SL_MIN;trend_filter=$TF;trend_mode=$TREND_MODE;zz_atr_trend=$ZZ_TREND;$PARAMS"
           python backtest/run_backtest.py \
             --symbols "$SYMBOLS" --interval "$INTERVAL" --start "$START" --end "$END" \
             --risk "$RISK" --fee "$FEE" --leverage "$LEVERAGE" --slippage "$SLIPPAGE" --params "$ALL"

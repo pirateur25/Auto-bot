@@ -21,6 +21,8 @@
 # Les paramètres se modifient ici, ou depuis le workflow GitHub (champ « params »), ex :
 #   trend_mode=ma;tp_fib=0.62;confirms=bubble
 
+import bisect
+
 import numpy as np
 import pandas as pd
 
@@ -220,27 +222,37 @@ def bear_range(F, fh, fl, p, tf):
 # ------------------------------------------------------------------ MSS après sweep
 
 def mss_events(h, l, c, k, ratio, o=None):
-    """MSS baissier (définition de Yacine), recalculé en continu sur les sommets VOISINS :
-      1) H1 = le dernier sommet confirmé (fractale de k bougies de chaque côté) avant H2 ;
+    """MSS baissier (définition de Yacine), recalculé en continu sur les sommets VOISINS.
+    k = nombre de bougies de CHAQUE côté qui doivent être moins extrêmes pour valider un sommet (ou un creux).
+      1) H1 = le dernier sommet confirmé (plus haut que les k bougies avant et les k bougies après) ;
       2) H2 = un plus haut qui dépasse H1 (sweep). H2 peut être encore provisoire : c'est le plus haut depuis H1 ;
-      3) L2 = le plus bas (mèche comprise) entre H1 et H2 = le creux à l'origine de H2 ;
+      3) L2 = le creux CONFIRMÉ (plus bas que les k bougies avant et après, mèche comprise) entre H1 et H2, le plus bas
+         s'il y en a plusieurs : c'est le creux à l'origine de H2. Sans creux confirmé entre eux, pas de MSS ;
       4) une bougie BAISSIÈRE dont la CLÔTURE (le corps) passe sous L2 = cassure ;
       5) cassure plus rapide que la montée : (t - H2) <= ratio x (H2 - L2), en bougies.
-    Chaque couple (H1, H2) ne peut se déclencher qu'une fois : dès qu'une clôture passe sous L2 il est consommé.
-    Causal : un sommet n'est connu que k bougies après sa formation. Renvoie (événement, H2, H1, L2)."""
+    Chaque couple (H1, H2) ne peut se déclencher qu'une fois. Causal : un sommet ou un creux n'est connu que k bougies
+    après sa formation. Renvoie (événement, H2, H1, L2)."""
     n = len(h)
     ev = np.zeros(n, bool)
     o_h2, o_h1, o_l2 = (np.full(n, np.nan) for _ in range(3))
     piv = []                        # sommets confirmés (indice, prix)
+    lows = []                       # creux confirmés (indice, prix)
+    low_idx = []                    # leurs indices (recherche rapide)
     runM, runM_i = -np.inf, -1      # plus haut depuis le dernier sommet confirmé
     consumed = set()
     ckey, cL, cLi = None, np.nan, -1
     for t in range(n):
         p = t - k
-        if p >= k and h[p] > h[p - k:p].max() and h[p] >= h[p + 1:t + 1].max():
-            piv.append((p, h[p]))
-            seg = h[p + 1:t + 1]
-            runM, runM_i = seg.max(), p + 1 + int(seg.argmax())
+        if p >= k:
+            if l[p] < l[p - k:p].min() and l[p] <= l[p + 1:t + 1].min():
+                lows.append((p, l[p]))
+                low_idx.append(p)
+            if h[p] > h[p - k:p].max() and h[p] >= h[p + 1:t + 1].max():
+                piv.append((p, h[p]))
+                seg = h[p + 1:t + 1]
+                runM, runM_i = seg.max(), p + 1 + int(seg.argmax())
+            elif piv and h[t] > runM:
+                runM, runM_i = h[t], t
         elif piv and h[t] > runM:
             runM, runM_i = h[t], t
         if not piv:
@@ -253,12 +265,18 @@ def mss_events(h, l, c, k, ratio, o=None):
             h2i, h2p = ia, pa
         else:
             continue
-        key = (h1i, h2i)
+        key = (h1i, h2i, len(lows))
         if key != ckey:
-            seg = l[h1i + 1:h2i + 1]
-            cL, cLi, ckey = seg.min(), h1i + 1 + int(seg.argmin()), key
-        if t > h2i and c[t] < cL and key not in consumed:
-            consumed.add(key)
+            btw = lows[bisect.bisect_right(low_idx, h1i):bisect.bisect_left(low_idx, h2i)]
+            if not btw:
+                ckey, cL = key, np.nan
+            else:
+                cLi, cL = min(btw, key=lambda z: z[1])
+                ckey = key
+        if cL != cL:
+            continue
+        if t > h2i and c[t] < cL and (h1i, h2i) not in consumed:
+            consumed.add((h1i, h2i))
             if (o is None or c[t] < o[t]) and (t - h2i) <= ratio * (h2i - cLi):
                 ev[t], o_h2[t], o_h1[t], o_l2[t] = True, h2p, h1p, cL
     return ev, o_h2, o_h1, o_l2

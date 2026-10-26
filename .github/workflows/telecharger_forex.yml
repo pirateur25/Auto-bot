@@ -1,0 +1,59 @@
+name: Telecharger forex
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "Date de début (AAAA-MM-JJ)"
+        default: "2021-01-01"
+      end:
+        description: "Date de fin (AAAA-MM-JJ)"
+        default: "2026-10-24"
+      interval:
+        description: "Unité de temps"
+        type: choice
+        default: "m5"
+        options: ["m5", "m15", "h1"]
+
+jobs:
+  forex:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        pair: [eurusd, gbpusd, usdjpy, audusd, usdcad, gbpjpy, eurgbp, usdchf]
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installation Python
+        run: pip install pandas requests
+
+      - name: Telechargement Dukascopy (${{ matrix.pair }})
+        run: |
+          npx --yes dukascopy-cli -i ${{ matrix.pair }} -from ${{ inputs.start }} -to ${{ inputs.end }} -t ${{ inputs.interval }} -f csv
+          ls -la download || true
+
+      - name: Conversion et envoi sur Telegram
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          INTERVAL: ${{ inputs.interval }}
+        run: |
+          python backtest/convert_forex.py --pair ${{ matrix.pair }} --interval "$INTERVAL" --src download --out data_out
+
+      - name: Sauvegarde (artefact GitHub)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: forex-${{ matrix.pair }}
+          path: data_out/

@@ -22,44 +22,44 @@ on:
         default: "1"
       fee_pct:
         description: "Frais par ordre (%)"
-        default: "0.1"
+        default: "0.01"
       slippage_pct:
         description: "Glissement / spread par ordre (%) — 0 = aucun"
-        default: "0"
+        default: "0.01"
       leverage:
         description: "Levier maximum (les stops serrés demandent du levier pour risquer exactement 1 R)"
-        default: "20"
+        default: "50"
       confirmations:
         description: "Confirmations utilisées"
         type: choice
-        default: "bulle + mss"
+        default: "mss seulement"
         options: ["bulle + mss", "mss seulement", "bulle seulement"]
       mss_swing_bars:
         description: "MSS : nb de bougies de chaque côté pour valider un plus haut / un creux (2 = petits, 5-12 = plus marqués)"
-        default: "2"
+        default: "4"
       sl_min_pct:
         description: "Stop minimum en % du prix (0 = aucun ; essayer 0.3 ou 0.5 pour éviter les stops trop serrés)"
-        default: "0"
+        default: "0.8"
       trend_filter:
         description: "Ne trader que dans le sens de la tendance ? (oui / non)"
         type: choice
-        default: "oui"
+        default: "non"
         options: ["oui", "non"]
       trend_mode:
         description: "Méthode de tendance : dow (structure), ma (moyenne mobile) ou both (les deux)"
         type: choice
-        default: "dow"
+        default: "both"
         options: ["dow", "ma", "both"]
       zz_atr_trend:
         description: "Lenteur de la tendance (ZigZag en ATR). Plus grand = tendance plus longue (essayer 2, 3, 4, 6)"
-        default: "2"
+        default: "7.9626"
       be_rr:
         description: "Break-even : SL déplacé au prix d'entrée quand le gain atteint X fois le risque (ex: 1, 1.5, 2). 1000 = désactivé"
         default: "1000"
       ote_react:
         description: "Retracement invalide si la zone OTE a déjà réagi (touchée puis retour au 0.5) ? (oui / non)"
         type: choice
-        default: "oui"
+        default: "non"
         options: ["oui", "non"]
       params:
         description: "Réglages stratégie (ex: trend_mode=ma;tp_fib=0.62;confirms=bubble). Vide = défaut"

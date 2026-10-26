@@ -33,44 +33,44 @@ except ImportError:                    # pragma: no cover
 PARAMS = {
     # --- tendance ---
     "trend_tf": "4h",
-    "trend_mode": "dow",        # "dow" (structure) | "ma" (moyenne mobile) | "both" (les deux d'accord)
-    "ma_len": 50,               # EMA de tendance (mode ma / both)
+    "trend_mode": "both",        # "dow" (structure) | "ma" (moyenne mobile) | "both" (les deux d'accord)
+    "ma_len": 20,               # EMA de tendance (mode ma / both)
     "ma_slope_bars": 5,         # la pente de l'EMA est mesurée sur N bougies H4
     # --- swings (ZigZag) : un retournement est confirmé quand le prix repart de N x ATR ---
     "atr_len": 14,
-    "zz_atr_4h": 2.0,
-    "zz_atr_1h": 2.5,
+    "zz_atr_4h": 3.8115,
+    "zz_atr_1h": 2.4454,
     "zz_atr_15m": 3.0,
     # --- retracement ---
-    "range_tfs": "4h,1h",       # jambes utilisées pour la zone OTE
-    "trend_filter": 1,          # 1 = on ne trade que dans le sens de la tendance ; 0 = pas de filtre de tendance
-    "zz_atr_trend": 2.0,        # ZigZag de la TENDANCE (plus grand = tendance plus lente / plus longue)
+    "range_tfs": "4h",       # jambes utilisées pour la zone OTE
+    "trend_filter": 0,          # 1 = on ne trade que dans le sens de la tendance ; 0 = pas de filtre de tendance
+    "zz_atr_trend": 7.9626,        # ZigZag de la TENDANCE (plus grand = tendance plus lente / plus longue)
     "range_origin": "leg",      # "leg" = le retracement part de l'ORIGINE du mouvement complet ; "pivot" = dernier pivot seulement
     "leg_lookback": 300,        # en "leg" : on remonte au plus de N bougies de l'unité du range
-    "ote_lo": 0.618,
-    "ote_hi": 0.786,
-    "ote_react": 1,             # 1 = un retracement dont la zone OTE a DÉJÀ réagi est invalide ; 0 = règle désactivée
-    "ote_react_level": 0.5,     # niveau (en fraction du range, 0 = bas, 1 = haut) que le prix doit retoucher après la réaction
+    "ote_lo": 0.603,
+    "ote_hi": 0.9335,
+    "ote_react": 0,             # 1 = un retracement dont la zone OTE a DÉJÀ réagi est invalide ; 0 = règle désactivée
+    "ote_react_level": 0.5378,     # niveau (en fraction du range, 0 = bas, 1 = haut) que le prix doit retoucher après la réaction
     # --- confirmations ---
-    "confirms": "bubble,mss",   # "bubble", "mss" ou les deux
+    "confirms": "mss",   # "bubble", "mss" ou les deux
     "conf_tfs": "5m,15m,1h",    # unités de temps de confirmation (>= unité de base du backtest)
     "bb_len": 20,
     "bb_mult": 2.0,
     # bulle validée = corps hors bande ET distance >= seuil (en % du prix). Seuils tirés de ton tableau :
-    "bubble_min_pct_5m": 0.045,
-    "bubble_min_pct_15m": 0.035,
-    "bubble_min_pct_1h": 0.15,
+    "bubble_min_pct_5m": 0.0398,
+    "bubble_min_pct_15m": 0.3388,
+    "bubble_min_pct_1h": 0.4054,
     "bubble_min_sigma": 0.0,    # seuil optionnel en écarts-types (0 = désactivé)
-    "mss_fractal": 2,           # un creux/sommet est confirmé après N bougies de chaque côté
-    "mss_trough_pivot": 0,      # 0 = le creux L2 est simplement le plus bas entre H1 et H2 ; 1 = il doit aussi être confirmé sur N bougies
-    "mss_min_sweep_pct": 0.0,   # H2 doit dépasser H1 d'au moins ce % (0 = n'importe quel dépassement)
-    "min_sl_pct": 0.0,          # distance minimale du stop en % du prix d'entrée (0 = pas de minimum)
-    "mss_speed_ratio": 1.0,     # cassure en <= ratio x (durée de la montée du sweep)
+    "mss_fractal": 4,           # un creux/sommet est confirmé après N bougies de chaque côté
+    "mss_trough_pivot": 1,      # 0 = le creux L2 est simplement le plus bas entre H1 et H2 ; 1 = il doit aussi être confirmé sur N bougies
+    "mss_min_sweep_pct": 0.0307,   # H2 doit dépasser H1 d'au moins ce % (0 = n'importe quel dépassement)
+    "min_sl_pct": 0.8,          # distance minimale du stop en % du prix d'entrée (0 = pas de minimum)
+    "mss_speed_ratio": 2.6765,     # cassure en <= ratio x (durée de la montée du sweep)
     # --- sortie ---
-    "sl_buf_atr": 0.2,          # marge au-dessus du plus haut local, en ATR de l'unité de confirmation
-    "tp_fib": 0.618,            # TP = retracement de ce niveau du mouvement de retracement (0.618 à 0.786)
-    "min_rr": 1.0,              # ratio gain/risque minimum (0 = pas de filtre)
-    "side": "both",             # "both" | "long" | "short"
+    "sl_buf_atr": 0.3407,          # marge au-dessus du plus haut local, en ATR de l'unité de confirmation
+    "tp_fib": 3.0,            # TP = retracement de ce niveau du mouvement de retracement (0.618 à 0.786)
+    "min_rr": 0.1101,              # ratio gain/risque minimum (0 = pas de filtre)
+    "side": "long",             # "both" | "long" | "short"
     "be_rr": 1000.0,            # break-even : SL placé au prix d'entrée dès que le gain atteint X fois le risque (1000 = désactivé)
 }
 

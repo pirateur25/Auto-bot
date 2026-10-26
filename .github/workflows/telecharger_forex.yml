@@ -40,8 +40,9 @@ jobs:
 
       - name: Telechargement Dukascopy (${{ matrix.pair }})
         run: |
-          npx --yes dukascopy-cli -i ${{ matrix.pair }} -from ${{ inputs.start }} -to ${{ inputs.end }} -t ${{ inputs.interval }} -f csv
-          ls -la download || true
+          npx --yes dukascopy-node -i ${{ matrix.pair }} -from ${{ inputs.start }} -to ${{ inputs.end }} -t ${{ inputs.interval }} -f csv
+          echo "--- fichiers produits ---"
+          find . -name '*.csv' -not -path './node_modules/*' | head -20
 
       - name: Conversion et envoi sur Telegram
         env:

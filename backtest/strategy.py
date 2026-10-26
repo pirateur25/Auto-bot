@@ -49,6 +49,8 @@ PARAMS = {
     "leg_lookback": 300,        # en "leg" : on remonte au plus de N bougies de l'unité du range
     "ote_lo": 0.618,
     "ote_hi": 0.786,
+    "ote_react": 1,             # 1 = un retracement dont la zone OTE a DÉJÀ réagi est invalide ; 0 = règle désactivée
+    "ote_react_level": 0.5,     # niveau (en fraction du range, 0 = bas, 1 = haut) que le prix doit retoucher après la réaction
     # --- confirmations ---
     "confirms": "bubble,mss",   # "bubble", "mss" ou les deux
     "conf_tfs": "5m,15m,1h",    # unités de temps de confirmation (>= unité de base du backtest)
@@ -69,6 +71,7 @@ PARAMS = {
     "tp_fib": 0.618,            # TP = retracement de ce niveau du mouvement de retracement (0.618 à 0.786)
     "min_rr": 1.0,              # ratio gain/risque minimum (0 = pas de filtre)
     "side": "both",             # "both" | "long" | "short"
+    "be_rr": 1000.0,            # break-even : SL placé au prix d'entrée dès que le gain atteint X fois le risque (1000 = désactivé)
 }
 
 ENGINE = {"allow_short": True, "max_bars": None}
@@ -344,6 +347,57 @@ def mss_events(h, l, c, k, ratio, o=None, trough_pivot=0, min_sweep_pct=0.0):
     return _mss_core(h, l, c, oo, has_o, int(k), float(ratio), bool(trough_pivot), float(min_sweep_pct))
 
 
+@_njit
+def _range_sm(bh, bl, bL, end, H0, Hb0, zlo, lvl):
+    """Suit le retracement sur les bougies de base entre le creux bL et `end` (exclu).
+    Règle (monde baissier ; le haussier est traité en miroir) :
+      - une bougie (mèche ou corps) touche la zone OTE après le creux, puis une bougie suivante redescend
+        jusqu'au niveau `lvl` (0,5) -> la zone OTE a déjà réagi : ce retracement est mort ;
+      - le plus haut atteint depuis le creux devient le haut candidat d'un futur retracement ;
+      - ce futur retracement n'existe que quand un creux PLUS BAS que le précédent se forme (ce creux devient son bas) ;
+      - si le prix reprend le haut courant, on repart de ce nouveau haut.
+    Renvoie H, indice de H, L, indice de L, mort (0/1), nombre de recyclages."""
+    H, Hb = H0, Hb0
+    L, Lb = bl[bL], bL
+    touched = False
+    dead = False
+    peak, peak_b = -np.inf, -1
+    dpeak, dpeak_b = -np.inf, -1
+    nrec = 0
+    for t in range(bL + 1, end):
+        if bh[t] >= H:
+            H, Hb = bh[t], t
+            L, Lb = np.inf, -1
+            touched = False
+            dead = False
+            peak, dpeak = -np.inf, -np.inf
+            continue
+        if bl[t] < L:
+            if dead:
+                H, Hb = dpeak, dpeak_b
+                nrec += 1
+                dead = False
+            L, Lb = bl[t], t
+            touched = False
+            peak, peak_b = -np.inf, -1
+            continue
+        if dead:
+            if bh[t] > dpeak:
+                dpeak, dpeak_b = bh[t], t
+            continue
+        if touched and bl[t] <= L + lvl * (H - L):
+            dead = True
+            dpeak, dpeak_b = peak, peak_b
+            if bh[t] > dpeak:
+                dpeak, dpeak_b = bh[t], t
+            continue
+        if bh[t] > peak:
+            peak, peak_b = bh[t], t
+        if bh[t] >= L + zlo * (H - L):
+            touched = True
+    return H, Hb, L, Lb, dead, nrec
+
+
 # ------------------------------------------------------------------ construction des signaux
 
 DIAG = {}   # entonnoir : combien de candidats sont éliminés par chaque filtre, par type de confirmation
@@ -411,6 +465,34 @@ def run_world(F, B, jm, p, sign):
                     _d(kind, "2 pas de range valide")
                     continue
                 H, L = rg["H"][jr], rg["L"][jr]
+                Rf, li = F[R], int(rg["Li"][jr])
+                bs = int(np.searchsorted(B["open_ns"], Rf["open_ns"][li], side="left"))
+                be = int(np.searchsorted(B["open_ns"], Rf["close_ns"][li], side="left"))
+                if be <= bs:
+                    _d(kind, "4 données manquantes")
+                    continue
+                bL = bs + int(np.argmin(bl[bs:be]))
+                hs = int(np.searchsorted(B["open_ns"], Rf["open_ns"][int(rg["Hi"][jr])], side="left"))
+                he = int(np.searchsorted(B["open_ns"], Rf["close_ns"][int(rg["Hi"][jr])], side="left"))
+                hi_b = hs + int(np.argmax(bh[hs:he])) if he > hs else -1
+                nrec = 0
+                if p["ote_react"] and hi_b >= 0:
+                    # début du déclencheur : avant lui, l'OTE ne doit pas avoir déjà réagi
+                    if kind == "bubble" or mssp is None:
+                        cj = j - 1
+                    else:
+                        w0 = max(0, j - 3000)
+                        hit = np.where(vh[w0:j] == mssp[0])[0]
+                        cj = w0 + int(hit[-1]) if len(hit) else j - 1
+                    cut = int(np.searchsorted(B["open_ns"], V["open_ns"][max(cj, 0)], side="left"))
+                    H, hi_b, L, bL2, dead, nrec = _range_sm(bh, bl, bL, cut, float(H), hi_b, p["ote_lo"], p["ote_react_level"])
+                    if dead:
+                        _d(kind, "3 OTE déjà réagie (retracement invalide)")
+                        continue
+                    if bL2 < 0:
+                        _d(kind, "6 sommet du range repris")
+                        continue
+                    bL = bL2
                 zl, zh = L + p["ote_lo"] * (H - L), L + p["ote_hi"] * (H - L)
                 if kind == "bubble":
                     if not (max(vh[j - 1], vh[j]) >= zl and min(vl[j - 1], vl[j]) <= zh):
@@ -419,13 +501,6 @@ def run_world(F, B, jm, p, sign):
                 elif not (zl <= sweep <= H):
                     _d(kind, "3 hors zone OTE")
                     continue
-                Rf, li = F[R], int(rg["Li"][jr])
-                bs = int(np.searchsorted(B["open_ns"], Rf["open_ns"][li], side="left"))
-                be = int(np.searchsorted(B["open_ns"], Rf["close_ns"][li], side="left"))
-                if be <= bs:
-                    _d(kind, "4 données manquantes")
-                    continue
-                bL = bs + int(np.argmin(bl[bs:be]))
                 after_l, after_h = bl[bL + 1:i + 1], bh[bL + 1:i + 1]
                 if len(after_h) == 0 or after_l.min() < bl[bL]:  # nouveau plus bas : la jambe a changé
                     _d(kind, "5 nouveau extrême depuis le creux du range")
@@ -457,7 +532,6 @@ def run_world(F, B, jm, p, sign):
                     return a0 + int(fn(arr[a0:a1])) if a1 > a0 else -1
                 def ts(ix):
                     return pd.Timestamp(int(B["open_ns"][ix]), tz="UTC").strftime("%Y-%m-%d %H:%M") if ix >= 0 else ""
-                hi_b = bidx(int(rg["Hi"][jr]), bh, np.argmax)
                 k_pk = bL + 1 + int(np.argmax(after_h))
                 pts = sorted([(sign * H, ts(hi_b)), (sign * L, ts(bL))], key=lambda x: x[0])
                 leg = sorted([(sign * peak, ts(k_pk)), (sign * bl[bL], ts(bL))], key=lambda x: x[0])
@@ -468,7 +542,8 @@ def run_world(F, B, jm, p, sign):
                         "fib_range_low": pts[0][0], "fib_range_low_time": pts[0][1],
                         "ote_zone_low": z[0], "ote_zone_high": z[1],
                         "fib_leg_high": leg[1][0], "fib_leg_high_time": leg[1][1],
-                        "fib_leg_low": leg[0][0], "fib_leg_low_time": leg[0][1], "tp_fib": p["tp_fib"]}
+                        "fib_leg_low": leg[0][0], "fib_leg_low_time": leg[0][1], "tp_fib": p["tp_fib"],
+                        "range_recycled": nrec}
                 jt_ = int(jt)
                 if sign == 1:
                     ph_, ch_, pl_, cl_ = (zzT[k][jt_] for k in ("prev_hi", "cur_hi", "prev_lo", "cur_lo"))
